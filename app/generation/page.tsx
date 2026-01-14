@@ -25,6 +25,17 @@ import {
 } from '@/lib/icons';
 import { motion } from 'framer-motion';
 import CodeApplicationProgress, { type CodeApplicationState } from '@/components/CodeApplicationProgress';
+import dynamic from 'next/dynamic';
+
+// Dynamic import for Terminal component (requires browser APIs)
+const Terminal = dynamic(() => import('@/components/Terminal'), {
+  ssr: false,
+  loading: () => (
+    <div className="h-full flex items-center justify-center bg-[#1a1a1a]">
+      <div className="text-gray-400">Loading terminal...</div>
+    </div>
+  )
+});
 
 interface SandboxData {
   sandboxId: string;
@@ -93,7 +104,7 @@ function AISandboxPage() {
   const [homeScreenFading, setHomeScreenFading] = useState(false);
   const [homeUrlInput, setHomeUrlInput] = useState('');
   const [homeContextInput, setHomeContextInput] = useState('');
-  const [activeTab, setActiveTab] = useState<'generation' | 'preview'>('preview');
+  const [activeTab, setActiveTab] = useState<'generation' | 'preview' | 'terminal'>('preview');
   const [showStyleSelector, setShowStyleSelector] = useState(false);
   const [selectedStyle, setSelectedStyle] = useState<string | null>(null);
   const [showLoadingBackground, setShowLoadingBackground] = useState(false);
@@ -1966,6 +1977,13 @@ Tip: I automatically detect and install npm packages from your code imports (lik
               <p className="text-sm">Start chatting to create your first app</p>
             </div>
           )}
+        </div>
+      );
+    } else if (activeTab === 'terminal') {
+      // Terminal Tab Content
+      return (
+        <div className="absolute inset-0 flex flex-col overflow-hidden">
+          <Terminal sandboxId={sandboxData?.sandboxId} />
         </div>
       );
     }
@@ -4147,6 +4165,21 @@ Focus on the key sections and content, making it clean and modern.`;
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                     </svg>
                     <span>View</span>
+                  </div>
+                </button>
+                <button
+                  onClick={() => setActiveTab('terminal')}
+                  className={`px-3 py-1 rounded transition-all text-xs font-medium ${
+                    activeTab === 'terminal' 
+                      ? 'bg-white text-gray-900 shadow-sm' 
+                      : 'bg-transparent text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5">
+                    <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                    <span>Terminal</span>
                   </div>
                 </button>
               </div>

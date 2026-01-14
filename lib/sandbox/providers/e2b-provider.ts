@@ -3,8 +3,22 @@ import { SandboxProvider, SandboxInfo, CommandResult } from '../types';
 // SandboxProviderConfig available through parent class
 import { appConfig } from '@/config/app.config';
 
+export interface PtySession {
+  id: string;
+  pid: number;
+  createdAt: Date;
+}
+
+export interface PtyOutput {
+  data: string;
+  pid: number;
+}
+
 export class E2BProvider extends SandboxProvider {
   private existingFiles: Set<string> = new Set();
+  private ptySession: PtySession | null = null;
+  private ptyOutputBuffer: string[] = [];
+  private ptyOutputListeners: Set<(data: string) => void> = new Set();
 
   /**
    * Attempt to reconnect to an existing E2B sandbox
@@ -435,5 +449,239 @@ print(f'✓ Vite restarted with PID: {process.pid}')
 
   isAlive(): boolean {
     return !!this.sandbox;
+  }
+
+  /**
+   * Create a PTY terminal session
+   */
+  async createPty(cols: number = 80, rows: number = 24): Promise<PtySession> {
+    if (!this.sandbox) {
+      throw new Error('No active sandbox');
+    }
+
+    // Kill existing PTY session if any
+    if (this.ptySession) {
+      await this.killPty();
+    }
+
+    console.log('[E2BProvider] Creating PTY session...');
+
+    // Start a bash shell in the app directory using subprocess
+    const result = await this.sandbox.runCode(`
+import subprocess
+import os
+import pty
+import select
+import json
+import sys
+
+# Change to app directory
+os.chdir('/home/user/app')
+
+# Create a pseudo-terminal
+master_fd, slave_fd = pty.openpty()
+
+# Start bash in the slave end of the PTY
+process = subprocess.Popen(
+    ['bash'],
+    stdin=slave_fd,
+    stdout=slave_fd,
+    stderr=slave_fd,
+    start_new_session=True,
+    cwd='/home/user/app'
+)
+
+# Store the master fd and pid for later use
+print(json.dumps({
+    "pid": process.pid,
+    "master_fd": master_fd,
+    "slave_fd": slave_fd
+}))
+    `);
+
+    const output = result.logs.stdout.join('\n');
+    let ptyInfo;
+    try {
+      ptyInfo = JSON.parse(output.trim());
+    } catch (e) {
+      console.error('[E2BProvider] Failed to parse PTY info:', output);
+      throw new Error('Failed to create PTY session');
+    }
+
+    this.ptySession = {
+      id: `pty-${Date.now()}`,
+      pid: ptyInfo.pid,
+      createdAt: new Date()
+    };
+
+    console.log('[E2BProvider] PTY session created:', this.ptySession);
+    return this.ptySession;
+  }
+
+  /**
+   * Send input to the PTY terminal
+   */
+  async sendPtyInput(input: string): Promise<void> {
+    if (!this.sandbox) {
+      throw new Error('No active sandbox');
+    }
+
+    if (!this.ptySession) {
+      throw new Error('No active PTY session');
+    }
+
+    // Escape the input for Python string
+    const escapedInput = JSON.stringify(input);
+
+    // Run the command and capture output
+    const result = await this.sandbox.runCode(`
+import subprocess
+import os
+import json
+
+os.chdir('/home/user/app')
+
+# Run command in bash and capture output
+result = subprocess.run(
+    ['bash', '-c', ${escapedInput}],
+    capture_output=True,
+    text=True,
+    cwd='/home/user/app',
+    env={**os.environ, 'TERM': 'xterm-256color'}
+)
+
+output = {
+    "stdout": result.stdout,
+    "stderr": result.stderr,
+    "returncode": result.returncode
+}
+print("__PTY_OUTPUT__" + json.dumps(output))
+    `);
+
+    const rawOutput = result.logs.stdout.join('\n');
+    const match = rawOutput.match(/__PTY_OUTPUT__(.+)/);
+    
+    if (match) {
+      try {
+        const parsed = JSON.parse(match[1]);
+        const combinedOutput = parsed.stdout + parsed.stderr;
+        
+        // Store output and notify listeners
+        this.ptyOutputBuffer.push(combinedOutput);
+        this.ptyOutputListeners.forEach(listener => listener(combinedOutput));
+      } catch (e) {
+        console.error('[E2BProvider] Failed to parse PTY output:', e);
+      }
+    }
+  }
+
+  /**
+   * Execute a command in the sandbox and return output
+   */
+  async executePtyCommand(command: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+    if (!this.sandbox) {
+      throw new Error('No active sandbox');
+    }
+
+    console.log('[E2BProvider] Executing PTY command:', command);
+
+    const result = await this.sandbox.runCode(`
+import subprocess
+import os
+import json
+import base64
+
+os.chdir('/home/user/app')
+
+# Run command in bash and capture output
+result = subprocess.run(
+    ['bash', '-c', ${JSON.stringify(command)}],
+    capture_output=True,
+    cwd='/home/user/app',
+    env={**os.environ, 'TERM': 'xterm-256color', 'FORCE_COLOR': '1'}
+)
+
+output = {
+    "stdout": base64.b64encode(result.stdout).decode('ascii'),
+    "stderr": base64.b64encode(result.stderr).decode('ascii'),
+    "returncode": result.returncode
+}
+print("__PTY_RESULT__" + json.dumps(output))
+    `);
+
+    const rawOutput = result.logs.stdout.join('\n');
+    const match = rawOutput.match(/__PTY_RESULT__(.+)/);
+    
+    if (match) {
+      try {
+        const parsed = JSON.parse(match[1]);
+        return {
+          stdout: Buffer.from(parsed.stdout, 'base64').toString('utf-8'),
+          stderr: Buffer.from(parsed.stderr, 'base64').toString('utf-8'),
+          exitCode: parsed.returncode
+        };
+      } catch (e) {
+        console.error('[E2BProvider] Failed to parse PTY result:', e);
+      }
+    }
+
+    return {
+      stdout: rawOutput,
+      stderr: result.logs.stderr.join('\n'),
+      exitCode: result.error ? 1 : 0
+    };
+  }
+
+  /**
+   * Kill the PTY session
+   */
+  async killPty(): Promise<void> {
+    if (!this.sandbox || !this.ptySession) {
+      return;
+    }
+
+    console.log('[E2BProvider] Killing PTY session:', this.ptySession.id);
+
+    try {
+      await this.sandbox.runCode(`
+import subprocess
+subprocess.run(['pkill', '-P', '${this.ptySession.pid}'], capture_output=True)
+subprocess.run(['kill', '-9', '${this.ptySession.pid}'], capture_output=True)
+print('PTY killed')
+      `);
+    } catch (e) {
+      console.error('[E2BProvider] Error killing PTY:', e);
+    }
+
+    this.ptySession = null;
+    this.ptyOutputBuffer = [];
+  }
+
+  /**
+   * Get current PTY session info
+   */
+  getPtySession(): PtySession | null {
+    return this.ptySession;
+  }
+
+  /**
+   * Check if PTY session is active
+   */
+  hasPtySession(): boolean {
+    return !!this.ptySession;
+  }
+
+  /**
+   * Add listener for PTY output
+   */
+  addPtyOutputListener(listener: (data: string) => void): void {
+    this.ptyOutputListeners.add(listener);
+  }
+
+  /**
+   * Remove listener for PTY output
+   */
+  removePtyOutputListener(listener: (data: string) => void): void {
+    this.ptyOutputListeners.delete(listener);
   }
 }
