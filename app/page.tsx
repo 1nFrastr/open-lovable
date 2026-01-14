@@ -403,7 +403,8 @@ export default function HomePage() {
                           }
                         }}
                         onKeyDown={(e) => {
-                          if (e.key === "Enter" && !isSearching && !isDetectingIntent) {
+                          // Ignore Enter during IME composition (e.g., Chinese input method selecting candidates)
+                          if (e.key === "Enter" && !isSearching && !isDetectingIntent && !e.nativeEvent.isComposing) {
                             e.preventDefault();
                             handleSubmit();
                           }

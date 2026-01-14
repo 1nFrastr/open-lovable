@@ -31,7 +31,8 @@ export default function SidebarQuickInput({ onSubmit, disabled = false }: Sideba
             disabled={disabled}
             onChange={(e) => setUrl(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") {
+              // Ignore Enter during IME composition (e.g., Chinese input method selecting candidates)
+              if (e.key === "Enter" && !e.nativeEvent.isComposing) {
                 e.preventDefault();
                 handleSubmit();
               }

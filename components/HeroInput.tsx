@@ -46,7 +46,8 @@ export default function HeroInput({
   }, [value, isFocused, showSearchFeatures]);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    // Ignore Enter during IME composition (e.g., Chinese input method selecting candidates)
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       onSubmit();
     }
