@@ -10,6 +10,12 @@ import { executeSearchPlan, formatSearchResultsForAI, selectTargetFile } from '@
 import { FileManifest } from '@/types/file-manifest';
 import type { ConversationState, ConversationMessage, ConversationEdit } from '@/types/conversation';
 import { appConfig } from '@/config/app.config';
+import { 
+  MAX_RESPONSE_SEGMENTS, 
+  CONTINUE_PROMPT, 
+  detectTruncation,
+  extractPartialContent 
+} from '@/lib/stream';
 
 // Force dynamic route to enable streaming
 export const dynamic = 'force-dynamic';
@@ -1206,63 +1212,7 @@ It's better to have 3 complete files than 10 incomplete files.`
           };
         }
         
-        let result;
-        let retryCount = 0;
-        const maxRetries = 2;
-        
-        while (retryCount <= maxRetries) {
-          try {
-            result = await streamText(streamOptions);
-            break; // Success, exit retry loop
-          } catch (streamError: any) {
-            console.error(`[generate-ai-code-stream] Error calling streamText (attempt ${retryCount + 1}/${maxRetries + 1}):`, streamError);
-            
-            // Check if this is a Groq service unavailable error
-            const isGroqServiceError = isKimiGroq && streamError.message?.includes('Service unavailable');
-            const isRetryableError = streamError.message?.includes('Service unavailable') || 
-                                    streamError.message?.includes('rate limit') ||
-                                    streamError.message?.includes('timeout');
-            
-            if (retryCount < maxRetries && isRetryableError) {
-              retryCount++;
-              console.log(`[generate-ai-code-stream] Retrying in ${retryCount * 2} seconds...`);
-              
-              // Send progress update about retry
-              await sendProgress({ 
-                type: 'info', 
-                message: `Service temporarily unavailable, retrying (attempt ${retryCount + 1}/${maxRetries + 1})...` 
-              });
-              
-              // Wait before retry with exponential backoff
-              await new Promise(resolve => setTimeout(resolve, retryCount * 2000));
-              
-              // If Groq fails, try switching to a fallback model
-              if (isGroqServiceError && retryCount === maxRetries) {
-                console.log('[generate-ai-code-stream] Groq service unavailable, falling back to GPT-4');
-                streamOptions.model = openai('gpt-4-turbo');
-                actualModel = 'gpt-4-turbo';
-              }
-            } else {
-              // Final error, send to user
-              await sendProgress({ 
-                type: 'error', 
-                message: `Failed to initialize ${isGoogle ? 'Gemini' : isAnthropic ? 'Claude' : isOpenAI ? 'GPT-5' : isKimiGroq ? 'Kimi (Groq)' : 'Groq'} streaming: ${streamError.message}` 
-              });
-              
-              // If this is a Google model error, provide helpful info
-              if (isGoogle) {
-                await sendProgress({ 
-                  type: 'info', 
-                  message: 'Tip: Make sure your GEMINI_API_KEY is set correctly and has proper permissions.' 
-                });
-              }
-              
-              throw streamError;
-            }
-          }
-        }
-        
-        // Stream the response and parse in real-time
+        // Streaming state for continuation support
         let generatedCode = '';
         let currentFile = '';
         let currentFilePath = '';
@@ -1270,121 +1220,274 @@ It's better to have 3 complete files than 10 incomplete files.`
         let isInFile = false;
         let isInTag = false;
         let conversationalBuffer = '';
-        
-        // Buffer for incomplete tags
         let tagBuffer = '';
+        let continuationCount = 0;
         
-        // Stream the response and parse for packages in real-time
-        for await (const textPart of result?.textStream || []) {
-          const text = textPart || '';
-          generatedCode += text;
-          currentFile += text;
+        // Message history for continuation
+        const conversationMessages: Array<{ role: 'system' | 'user' | 'assistant', content: string }> = [
+          { role: 'system', content: streamOptions.messages[0].content as string },
+          { role: 'user', content: streamOptions.messages[1].content as string }
+        ];
+        
+        /**
+         * Stream processing function - can be called recursively for continuation
+         */
+        async function processStream(currentStreamOptions: any): Promise<string> {
+          let result;
+          let retryCount = 0;
+          const maxRetries = 2;
           
-          // Combine with buffer for tag detection
-          const searchText = tagBuffer + text;
-          
-          // Log streaming chunks to console
-          process.stdout.write(text);
-          
-          // Check if we're entering or leaving a tag
-          const hasOpenTag = /<(file|package|packages|explanation|command|structure|template)\b/.test(text);
-          const hasCloseTag = /<\/(file|package|packages|explanation|command|structure|template)>/.test(text);
-          
-          if (hasOpenTag) {
-            // Send any buffered conversational text before the tag
-            if (conversationalBuffer.trim() && !isInTag) {
-              await sendProgress({ 
-                type: 'conversation', 
-                text: conversationalBuffer.trim()
-              });
-              conversationalBuffer = '';
-            }
-            isInTag = true;
-          }
-          
-          if (hasCloseTag) {
-            isInTag = false;
-          }
-          
-          // If we're not in a tag, buffer as conversational text
-          if (!isInTag && !hasOpenTag) {
-            conversationalBuffer += text;
-          }
-          
-          // Stream the raw text for live preview
-          await sendProgress({ 
-            type: 'stream', 
-            text: text,
-            raw: true 
-          });
-          
-          // Debug: Log every 100 characters streamed
-          if (generatedCode.length % 100 < text.length) {
-            console.log(`[generate-ai-code-stream] Streamed ${generatedCode.length} chars`);
-          }
-          
-          // Check for package tags in buffered text (ONLY for edits, not initial generation)
-          let lastIndex = 0;
-          if (isEdit) {
-            const packageRegex = /<package>([^<]+)<\/package>/g;
-            let packageMatch;
-            
-            while ((packageMatch = packageRegex.exec(searchText)) !== null) {
-              const packageName = packageMatch[1].trim();
-              if (packageName && !packagesToInstall.includes(packageName)) {
-                packagesToInstall.push(packageName);
-                console.log(`[generate-ai-code-stream] Package detected: ${packageName}`);
+          while (retryCount <= maxRetries) {
+            try {
+              result = await streamText(currentStreamOptions);
+              break; // Success, exit retry loop
+            } catch (streamError: any) {
+              console.error(`[generate-ai-code-stream] Error calling streamText (attempt ${retryCount + 1}/${maxRetries + 1}):`, streamError);
+              
+              // Check if this is a Groq service unavailable error
+              const isGroqServiceError = isKimiGroq && streamError.message?.includes('Service unavailable');
+              const isRetryableError = streamError.message?.includes('Service unavailable') || 
+                                      streamError.message?.includes('rate limit') ||
+                                      streamError.message?.includes('timeout');
+              
+              if (retryCount < maxRetries && isRetryableError) {
+                retryCount++;
+                console.log(`[generate-ai-code-stream] Retrying in ${retryCount * 2} seconds...`);
+                
+                // Send progress update about retry
                 await sendProgress({ 
-                  type: 'package', 
-                  name: packageName,
-                  message: `Package detected: ${packageName}`
+                  type: 'info', 
+                  message: `Service temporarily unavailable, retrying (attempt ${retryCount + 1}/${maxRetries + 1})...` 
+                });
+                
+                // Wait before retry with exponential backoff
+                await new Promise(resolve => setTimeout(resolve, retryCount * 2000));
+                
+                // If Groq fails, try switching to a fallback model
+                if (isGroqServiceError && retryCount === maxRetries) {
+                  console.log('[generate-ai-code-stream] Groq service unavailable, falling back to GPT-4');
+                  currentStreamOptions.model = openai('gpt-4-turbo');
+                  actualModel = 'gpt-4-turbo';
+                }
+              } else {
+                // Final error, send to user
+                await sendProgress({ 
+                  type: 'error', 
+                  message: `Failed to initialize ${isGoogle ? 'Gemini' : isAnthropic ? 'Claude' : isOpenAI ? 'GPT-5' : isKimiGroq ? 'Kimi (Groq)' : 'Groq'} streaming: ${streamError.message}` 
+                });
+                
+                // If this is a Google model error, provide helpful info
+                if (isGoogle) {
+                  await sendProgress({ 
+                    type: 'info', 
+                    message: 'Tip: Make sure your GEMINI_API_KEY is set correctly and has proper permissions.' 
+                  });
+                }
+                
+                throw streamError;
+              }
+            }
+          }
+          
+          // Track content generated in this segment
+          let segmentContent = '';
+          
+          // Stream the response and parse for packages in real-time
+          for await (const textPart of result?.textStream || []) {
+            const text = textPart || '';
+            generatedCode += text;
+            segmentContent += text;
+            currentFile += text;
+            
+            // Combine with buffer for tag detection
+            const searchText = tagBuffer + text;
+            
+            // Log streaming chunks to console
+            process.stdout.write(text);
+            
+            // Check if we're entering or leaving a tag
+            const hasOpenTag = /<(file|package|packages|explanation|command|structure|template)\b/.test(text);
+            const hasCloseTag = /<\/(file|package|packages|explanation|command|structure|template)>/.test(text);
+            
+            if (hasOpenTag) {
+              // Send any buffered conversational text before the tag
+              if (conversationalBuffer.trim() && !isInTag) {
+                await sendProgress({ 
+                  type: 'conversation', 
+                  text: conversationalBuffer.trim()
+                });
+                conversationalBuffer = '';
+              }
+              isInTag = true;
+            }
+            
+            if (hasCloseTag) {
+              isInTag = false;
+            }
+            
+            // If we're not in a tag, buffer as conversational text
+            if (!isInTag && !hasOpenTag) {
+              conversationalBuffer += text;
+            }
+            
+            // Stream the raw text for live preview
+            await sendProgress({ 
+              type: 'stream', 
+              text: text,
+              raw: true 
+            });
+            
+            // Debug: Log every 100 characters streamed
+            if (generatedCode.length % 100 < text.length) {
+              console.log(`[generate-ai-code-stream] Streamed ${generatedCode.length} chars`);
+            }
+            
+            // Check for package tags in buffered text (ONLY for edits, not initial generation)
+            let lastIndex = 0;
+            if (isEdit) {
+              const packageRegex = /<package>([^<]+)<\/package>/g;
+              let packageMatch;
+              
+              while ((packageMatch = packageRegex.exec(searchText)) !== null) {
+                const packageName = packageMatch[1].trim();
+                if (packageName && !packagesToInstall.includes(packageName)) {
+                  packagesToInstall.push(packageName);
+                  console.log(`[generate-ai-code-stream] Package detected: ${packageName}`);
+                  await sendProgress({ 
+                    type: 'package', 
+                    name: packageName,
+                    message: `Package detected: ${packageName}`
+                  });
+                }
+                lastIndex = packageMatch.index + packageMatch[0].length;
+              }
+            }
+            
+            // Keep unmatched portion in buffer for next iteration
+            tagBuffer = searchText.substring(Math.max(0, lastIndex - 50)); // Keep last 50 chars
+            
+            // Check for file boundaries
+            if (text.includes('<file path="')) {
+              const pathMatch = text.match(/<file path="([^"]+)"/);
+              if (pathMatch) {
+                currentFilePath = pathMatch[1];
+                isInFile = true;
+                currentFile = text;
+              }
+            }
+            
+            // Check for file end
+            if (isInFile && currentFile.includes('</file>')) {
+              isInFile = false;
+              
+              // Send component progress update
+              if (currentFilePath.includes('components/')) {
+                componentCount++;
+                const componentName = currentFilePath.split('/').pop()?.replace('.tsx', '') || 'Component';
+                await sendProgress({ 
+                  type: 'component', 
+                  name: componentName,
+                  path: currentFilePath,
+                  index: componentCount
+                });
+              } else if (currentFilePath.includes('App.tsx')) {
+                await sendProgress({ 
+                  type: 'app', 
+                  message: 'Generated main App.tsx',
+                  path: currentFilePath
                 });
               }
-              lastIndex = packageMatch.index + packageMatch[0].length;
+              
+              currentFile = '';
+              currentFilePath = '';
             }
           }
           
-          // Keep unmatched portion in buffer for next iteration
-          tagBuffer = searchText.substring(Math.max(0, lastIndex - 50)); // Keep last 50 chars
+          // Check finish reason after stream completes
+          const finishReason = await result?.finishReason;
+          const usage = await result?.usage;
           
-          // Check for file boundaries
-          if (text.includes('<file path="')) {
-            const pathMatch = text.match(/<file path="([^"]+)"/);
-            if (pathMatch) {
-              currentFilePath = pathMatch[1];
-              isInFile = true;
-              currentFile = text;
-            }
-          }
+          console.log(`\n[generate-ai-code-stream] Segment ${continuationCount + 1} complete. Finish reason: ${finishReason}, tokens: ${usage?.totalTokens || 'unknown'}`);
           
-          // Check for file end
-          if (isInFile && currentFile.includes('</file>')) {
-            isInFile = false;
+          // Check if response was truncated due to token limit
+          if (finishReason === 'length' && continuationCount < MAX_RESPONSE_SEGMENTS) {
+            // Response was truncated, need to continue
+            continuationCount++;
+            const segmentsLeft = MAX_RESPONSE_SEGMENTS - continuationCount;
             
-            // Send component progress update
-            if (currentFilePath.includes('components/')) {
-              componentCount++;
-              const componentName = currentFilePath.split('/').pop()?.replace('.tsx', '') || 'Component';
-              await sendProgress({ 
-                type: 'component', 
-                name: componentName,
-                path: currentFilePath,
-                index: componentCount
-              });
-            } else if (currentFilePath.includes('App.tsx')) {
-              await sendProgress({ 
-                type: 'app', 
-                message: 'Generated main App.tsx',
-                path: currentFilePath
-              });
+            console.log(`[generate-ai-code-stream] Response truncated! Continuing... (${segmentsLeft} continuation(s) remaining)`);
+            
+            // Send progress update (user-visible)
+            await sendProgress({ 
+              type: 'info', 
+              message: `Response was long, continuing generation... (${continuationCount}/${MAX_RESPONSE_SEGMENTS + 1})` 
+            });
+            
+            // Extract partial content info for better continuation
+            const { partialFilePath, partialFileContent } = extractPartialContent(segmentContent);
+            
+            // Build continuation context
+            let continuationContext = CONTINUE_PROMPT;
+            if (partialFilePath && partialFileContent) {
+              continuationContext += `\n\nYou were generating file "${partialFilePath}". The partial content so far is:\n${partialFileContent.slice(-500)}\n\nContinue from exactly where you left off.`;
             }
             
-            currentFile = '';
-            currentFilePath = '';
+            // Add current content as assistant message and continue prompt as user message
+            conversationMessages.push({ role: 'assistant', content: segmentContent });
+            conversationMessages.push({ role: 'user', content: continuationContext });
+            
+            // Create new stream options for continuation
+            const continuationOptions = {
+              ...currentStreamOptions,
+              messages: conversationMessages.map(msg => ({
+                role: msg.role,
+                content: msg.content
+              }))
+            };
+            
+            // Recursively process the continuation
+            const continuationContent = await processStream(continuationOptions);
+            return segmentContent + continuationContent;
           }
+          
+          // Check for content-based truncation (backup detection)
+          const truncationCheck = detectTruncation(generatedCode);
+          if (truncationCheck.isTruncated && continuationCount < MAX_RESPONSE_SEGMENTS && finishReason !== 'stop') {
+            console.warn(`[generate-ai-code-stream] Content truncation detected: ${truncationCheck.reason}`);
+            
+            // Only auto-continue if truncation is severe
+            if (truncationCheck.reason?.includes('Unclosed file tags')) {
+              continuationCount++;
+              
+              await sendProgress({ 
+                type: 'warning', 
+                message: `Detected incomplete content, attempting to complete... (${continuationCount}/${MAX_RESPONSE_SEGMENTS + 1})` 
+              });
+              
+              // Add current content and continue prompt
+              conversationMessages.push({ role: 'assistant', content: segmentContent });
+              conversationMessages.push({ role: 'user', content: CONTINUE_PROMPT + '\n\nIMPORTANT: The previous response was cut off mid-file. Complete the file and close all tags.' });
+              
+              const continuationOptions = {
+                ...currentStreamOptions,
+                messages: conversationMessages.map(msg => ({
+                  role: msg.role,
+                  content: msg.content
+                }))
+              };
+              
+              const continuationContent = await processStream(continuationOptions);
+              return segmentContent + continuationContent;
+            }
+          }
+          
+          return segmentContent;
         }
         
-        console.log('\n\n[generate-ai-code-stream] Streaming complete.');
+        // Start processing the stream
+        await processStream(streamOptions);
+        
+        console.log(`\n\n[generate-ai-code-stream] Streaming complete. Total continuations: ${continuationCount}`);
         
         // Send any remaining conversational text
         if (conversationalBuffer.trim()) {

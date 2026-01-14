@@ -75,31 +75,50 @@ export class E2BProvider extends SandboxProvider {
       throw new Error('No active sandbox');
     }
 
-    
+    // Use JSON output to cleanly separate stdout, stderr, and exit code
     const result = await this.sandbox.runCode(`
-      import subprocess
-      import os
+import subprocess
+import os
+import json
+import base64
 
-      os.chdir('/home/user/app')
-      result = subprocess.run(${JSON.stringify(command.split(' '))}, 
-                            capture_output=True, 
-                            text=True, 
-                            shell=False)
+os.chdir('/home/user/app')
+result = subprocess.run(${JSON.stringify(command.split(' '))}, 
+                      capture_output=True, 
+                      shell=False)
 
-      print("STDOUT:")
-      print(result.stdout)
-      if result.stderr:
-          print("\\nSTDERR:")
-          print(result.stderr)
-      print(f"\\nReturn code: {result.returncode}")
+# Use base64 encoding to handle binary output safely
+output = {
+    "stdout": base64.b64encode(result.stdout).decode('ascii'),
+    "stderr": base64.b64encode(result.stderr).decode('ascii'),
+    "exitCode": result.returncode
+}
+print("__JSON_RESULT__" + json.dumps(output))
     `);
     
-    const output = result.logs.stdout.join('\n');
-    const stderr = result.logs.stderr.join('\n');
+    const rawOutput = result.logs.stdout.join('\n');
     
+    // Parse the JSON result from the output
+    const jsonMatch = rawOutput.match(/__JSON_RESULT__(.+)/);
+    if (jsonMatch) {
+      try {
+        const parsed = JSON.parse(jsonMatch[1]);
+        return {
+          stdout: Buffer.from(parsed.stdout, 'base64').toString('utf-8'),
+          stderr: Buffer.from(parsed.stderr, 'base64').toString('utf-8'),
+          exitCode: parsed.exitCode,
+          success: parsed.exitCode === 0
+        };
+      } catch (e) {
+        // Fall back to raw output if JSON parsing fails
+        console.error('[E2BProvider] Failed to parse JSON result:', e);
+      }
+    }
+    
+    // Fallback: return raw output
     return {
-      stdout: output,
-      stderr,
+      stdout: rawOutput,
+      stderr: result.logs.stderr.join('\n'),
       exitCode: result.error ? 1 : 0,
       success: !result.error
     };

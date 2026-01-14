@@ -87,6 +87,19 @@ export const appConfig = {
     
     // Max tokens for truncation recovery
     truncationRecoveryMaxTokens: 4000,
+    
+    // Stream continuation settings (for handling token limit truncation)
+    streamContinuation: {
+      // Maximum number of continuation segments (each segment is an additional API call)
+      // Total responses = 1 (initial) + maxSegments
+      maxSegments: 2,
+      
+      // Enable automatic stream continuation when response is truncated
+      enabled: true,
+      
+      // Timeout for stream activity detection (milliseconds)
+      streamTimeout: 45000,
+    },
   },
   
   // Code Application Configuration
