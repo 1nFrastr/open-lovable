@@ -136,7 +136,7 @@ declare global {
 
 export async function POST(request: NextRequest) {
   try {
-    const { response, isEdit = false, packages = [] } = await request.json();
+    const { response, isEdit = false, packages = [], isTemplateImport = false } = await request.json();
     
     if (!response) {
       return NextResponse.json({
@@ -146,6 +146,11 @@ export async function POST(request: NextRequest) {
     
     // Parse the AI response
     const parsed = parseAIResponse(response);
+    
+    // Log template import mode
+    if (isTemplateImport) {
+      console.log('[apply-ai-code] Template import mode - preserving all file paths');
+    }
     const morphEnabled = Boolean(isEdit && process.env.MORPH_API_KEY);
     const morphEdits = morphEnabled ? parseMorphEdits(response) : [];
     console.log('[apply-ai-code] Morph Fast Apply mode:', morphEnabled);
@@ -376,16 +381,23 @@ export async function POST(request: NextRequest) {
       console.warn('[apply-ai-code] Morph enabled but no <edit> blocks found; falling back to full-file flow');
     }
 
-    // Filter out config files that shouldn't be created
+    // Filter out config files that shouldn't be created (only for AI-generated code, not template imports)
     const configFiles = ['tailwind.config.js', 'vite.config.js', 'package.json', 'package-lock.json', 'tsconfig.json', 'postcss.config.js'];
-    let filteredFiles = parsed.files.filter(file => {
-      const fileName = file.path.split('/').pop() || '';
-      if (configFiles.includes(fileName)) {
-        console.warn(`[apply-ai-code] Skipping config file: ${file.path} - already exists in template`);
-        return false;
-      }
-      return true;
-    });
+    let filteredFiles = parsed.files;
+    
+    if (!isTemplateImport) {
+      // Only filter config files for AI-generated code, not template imports
+      filteredFiles = parsed.files.filter(file => {
+        const fileName = file.path.split('/').pop() || '';
+        if (configFiles.includes(fileName)) {
+          console.warn(`[apply-ai-code] Skipping config file: ${file.path} - already exists in template`);
+          return false;
+        }
+        return true;
+      });
+    } else {
+      console.log(`[apply-ai-code] Template import: keeping all ${parsed.files.length} files including config files`);
+    }
 
     // Avoid overwriting files already updated by Morph
     if (morphUpdatedPaths.size > 0) {
@@ -411,15 +423,26 @@ export async function POST(request: NextRequest) {
         if (normalizedPath.startsWith('/')) {
           normalizedPath = normalizedPath.substring(1);
         }
-        // Ensure src/ prefix for component files
-        if (!normalizedPath.startsWith('src/') && 
-            !normalizedPath.startsWith('public/') && 
-            normalizedPath !== 'index.html' && 
-            normalizedPath !== 'package.json' &&
-            normalizedPath !== 'vite.config.js' &&
-            normalizedPath !== 'tailwind.config.js' &&
-            normalizedPath !== 'postcss.config.js') {
-          normalizedPath = 'src/' + normalizedPath;
+        
+        // For template imports, preserve exact paths from template
+        // For AI-generated code, add src/ prefix to component files
+        if (!isTemplateImport) {
+          // Ensure src/ prefix for component files (AI-generated code only)
+          if (!normalizedPath.startsWith('src/') && 
+              !normalizedPath.startsWith('public/') && 
+              normalizedPath !== 'index.html' && 
+              normalizedPath !== 'package.json' &&
+              normalizedPath !== 'vite.config.js' &&
+              normalizedPath !== 'vite.config.ts' &&
+              normalizedPath !== 'tailwind.config.js' &&
+              normalizedPath !== 'postcss.config.js' &&
+              normalizedPath !== 'tsconfig.json' &&
+              normalizedPath !== 'tsconfig.app.json' &&
+              normalizedPath !== 'tsconfig.node.json' &&
+              normalizedPath !== 'eslint.config.js' &&
+              normalizedPath !== 'package-lock.json') {
+            normalizedPath = 'src/' + normalizedPath;
+          }
         }
         
         const fullPath = `/home/user/app/${normalizedPath}`;

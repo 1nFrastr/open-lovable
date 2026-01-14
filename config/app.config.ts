@@ -51,10 +51,11 @@ export const appConfig = {
   // AI Model Configuration
   ai: {
     // Default AI model
-    defaultModel: 'google/gemini-3-pro-preview',
+    defaultModel: 'anthropic/claude-sonnet-4-5-20250929',
     
     // Available models
     availableModels: [
+      'anthropic/claude-sonnet-4-5-20250929',
       'openai/gpt-5',
       'moonshotai/kimi-k2-instruct-0905',
       'anthropic/claude-sonnet-4-20250514',
@@ -63,6 +64,7 @@ export const appConfig = {
     
     // Model display names
     modelDisplayNames: {
+      'anthropic/claude-sonnet-4-5-20250929': 'Claude Sonnet 4.5',
       'openai/gpt-5': 'GPT-5',
       'moonshotai/kimi-k2-instruct-0905': 'Kimi K2 (Groq)',
       'anthropic/claude-sonnet-4-20250514': 'Sonnet 4',

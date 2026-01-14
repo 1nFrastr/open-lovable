@@ -29,6 +29,10 @@ import HeaderDropdownWrapper from "@/components/shared/header/Dropdown/Wrapper/W
 import GithubIcon from "@/components/shared/header/Github/_svg/GithubIcon";
 import ButtonUI from "@/components/ui/shadcn/button"
 
+// Import template configuration
+import { UI_TEMPLATES } from "@/config/templates";
+import type { Template } from "@/types/template";
+
 interface SearchResult {
   url: string;
   title: string;
@@ -51,6 +55,11 @@ export default function HomePage() {
   const [showInstructionsForIndex, setShowInstructionsForIndex] = useState<number | null>(null);
   const [additionalInstructions, setAdditionalInstructions] = useState<string>('');
   const [extendBrandStyles, setExtendBrandStyles] = useState<boolean>(false);
+  
+  // Template mode state
+  const [isDetectingIntent, setIsDetectingIntent] = useState<boolean>(false);
+  const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
+  
   const router = useRouter();
   
   // Simple URL validation
@@ -134,57 +143,56 @@ export default function HomePage() {
         router.push('/generation');
       }
     } else {
-      // It's a search term, fade out if results exist, then search
-      if (hasSearched && searchResults.length > 0) {
-        setIsFadingOut(true);
+      // It's a project description - use template mode
+      setIsDetectingIntent(true);
+      
+      try {
+        // Call intent detection API
+        const response = await fetch('/api/detect-intent', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            message: inputValue,
+            model: 'gpt-4o-mini'
+          })
+        });
         
-        setTimeout(async () => {
-          setSearchResults([]);
-          setIsFadingOut(false);
-          setShowSelectMessage(true);
-          
-          // Perform new search
-          await performSearch(inputValue);
-          setHasSearched(true);
-          setShowSearchTiles(true);
-          setShowSelectMessage(false);
-          
-          // Smooth scroll to carousel
-          setTimeout(() => {
-            const carouselSection = document.querySelector('.carousel-section');
-            if (carouselSection) {
-              carouselSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            }
-          }, 300);
-        }, 500);
-      } else {
-        // First search, no fade needed
-        setShowSelectMessage(true);
-        setIsSearching(true);
-        setHasSearched(true);
-        setShowSearchTiles(true);
+        const data = await response.json();
         
-        // Scroll to carousel area immediately
-        setTimeout(() => {
-          const carouselSection = document.querySelector('.carousel-section');
-          if (carouselSection) {
-            carouselSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          }
-        }, 100);
+        if (data.error) {
+          console.warn('[home] Intent detection error:', data.error);
+          // Use default template on error
+        }
         
-        await performSearch(inputValue);
-        setShowSelectMessage(false);
-        setIsSearching(false);
+        const templateName = data.template || 'react-vite';
+        const projectTitle = data.title || 'New Project';
         
-        // Smooth scroll to carousel
-        setTimeout(() => {
-          const carouselSection = document.querySelector('.carousel-section');
-          if (carouselSection) {
-            carouselSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          }
-        }, 300);
+        console.log('[home] Selected template:', templateName, 'Title:', projectTitle);
+        
+        // Store template mode data in sessionStorage
+        sessionStorage.setItem('projectPrompt', inputValue);
+        sessionStorage.setItem('selectedTemplate', templateName);
+        sessionStorage.setItem('projectTitle', projectTitle);
+        sessionStorage.setItem('selectedModel', selectedModel);
+        sessionStorage.setItem('templateMode', 'true');
+        sessionStorage.setItem('autoStart', 'true');
+        
+        // Navigate to generation page
+        router.push('/generation');
+        
+      } catch (error) {
+        console.error('[home] Intent detection failed:', error);
+        toast.error('Failed to analyze your request. Please try again.');
+      } finally {
+        setIsDetectingIntent(false);
       }
     }
+  };
+  
+  // Handle template card click
+  const handleTemplateClick = (template: Template) => {
+    setSelectedTemplate(template.name);
+    setUrl(`Create a ${template.label} project`);
   };
 
   // Perform search when user types
@@ -263,14 +271,14 @@ export default function HomePage() {
               <HomeHeroBadge />
               <HomeHeroTitle />
               <p className="text-center text-body-large">
-                Clone brand format or re-imagine any website, in seconds.
+                Describe what you want to build, or clone any website in seconds.
               </p>
               <Link
                 className="bg-black-alpha-4 hover:bg-black-alpha-6 rounded-6 px-8 lg:px-6 text-label-large h-30 lg:h-24 block mt-8 mx-auto w-max gap-4 transition-all"
                 href="#"
                 onClick={(e) => e.preventDefault()}
               >
-                Powered by Firecrawl.
+                AI-Powered Development
               </Link>
             </div>
           </div>
@@ -378,14 +386,15 @@ export default function HomePage() {
                       )}
                       <input
                         className="flex-1 bg-transparent text-body-input text-accent-black placeholder:text-black-alpha-48 focus:outline-none focus:ring-0 focus:border-transparent"
-                        placeholder="Enter URL or search term..."
+                        placeholder="Describe what to build or enter a URL to clone..."
                         type="text"
                         value={url}
-                        disabled={isSearching}
+                        disabled={isSearching || isDetectingIntent}
                         onChange={(e) => {
                           const value = e.target.value;
                           setUrl(value);
                           setIsValidUrl(validateUrl(value));
+                          setSelectedTemplate(null);
                           // Reset search state when input changes
                           if (value.trim() === "") {
                             setShowSearchTiles(false);
@@ -394,7 +403,7 @@ export default function HomePage() {
                           }
                         }}
                         onKeyDown={(e) => {
-                          if (e.key === "Enter" && !isSearching) {
+                          if (e.key === "Enter" && !isSearching && !isDetectingIntent) {
                             e.preventDefault();
                             handleSubmit();
                           }
@@ -408,16 +417,16 @@ export default function HomePage() {
                       <div
                         onClick={(e) => {
                           e.preventDefault();
-                          if (!isSearching) {
+                          if (!isSearching && !isDetectingIntent) {
                             handleSubmit();
                           }
                         }}
-                        className={isSearching ? 'pointer-events-none' : ''}
+                        className={(isSearching || isDetectingIntent) ? 'pointer-events-none' : ''}
                       >
                         <HeroInputSubmitButton 
                           dirty={url.length > 0} 
-                          buttonText={isURL(url) ? 'Scrape Site' : 'Search'} 
-                          disabled={isSearching}
+                          buttonText={isDetectingIntent ? 'Analyzing...' : (isURL(url) ? 'Clone Site' : 'Build')} 
+                          disabled={isSearching || isDetectingIntent}
                         />
                       </div>
                     </>
@@ -558,6 +567,38 @@ export default function HomePage() {
                   <AsciiExplosion className="-top-200" />
                 </div>
               </div>
+            </div>
+          </div>
+          
+          {/* Template Cards Section */}
+          <div className="max-w-4xl mx-auto px-16 mt-24 mb-16">
+            <p className="text-center text-sm text-black-alpha-48 mb-12">
+              Or start with a template
+            </p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-8">
+              {UI_TEMPLATES.map((template) => (
+                <button
+                  key={template.name}
+                  onClick={() => handleTemplateClick(template)}
+                  className={`
+                    group p-12 rounded-12 border transition-all duration-200
+                    flex flex-col items-center gap-6 text-center
+                    ${selectedTemplate === template.name 
+                      ? 'border-heat-100 bg-heat-4 shadow-md' 
+                      : 'border-gray-200 hover:border-gray-300 hover:shadow-sm bg-white'
+                    }
+                  `}
+                >
+                  <span className="text-2xl">{template.icon}</span>
+                  <span className={`text-xs font-medium ${
+                    selectedTemplate === template.name 
+                      ? 'text-heat-100' 
+                      : 'text-gray-700 group-hover:text-gray-900'
+                  }`}>
+                    {template.label}
+                  </span>
+                </button>
+              ))}
             </div>
           </div>
         </section>

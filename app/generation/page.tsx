@@ -29,6 +29,8 @@ import CodeApplicationProgress, { type CodeApplicationState } from '@/components
 interface SandboxData {
   sandboxId: string;
   url: string;
+  template?: string;
+  templateSource?: 'bundled' | 'github' | 'fallback';
   [key: string]: any;
 }
 
@@ -168,6 +170,73 @@ function AISandboxPage() {
     const initializePage = async () => {
       // Prevent double execution in React StrictMode
       if (sandboxCreated) return;
+      
+      // Check for template mode first
+      const isTemplateMode = sessionStorage.getItem('templateMode') === 'true';
+      const projectPrompt = sessionStorage.getItem('projectPrompt');
+      const selectedTemplate = sessionStorage.getItem('selectedTemplate');
+      const projectTitle = sessionStorage.getItem('projectTitle');
+      
+      if (isTemplateMode && projectPrompt && selectedTemplate) {
+        console.log('[generation] Template mode detected:', selectedTemplate);
+        
+        // Clear template mode storage
+        sessionStorage.removeItem('templateMode');
+        sessionStorage.removeItem('projectPrompt');
+        sessionStorage.removeItem('selectedTemplate');
+        sessionStorage.removeItem('projectTitle');
+        
+        const storedModel = sessionStorage.getItem('selectedModel');
+        if (storedModel) {
+          setAiModel(storedModel);
+          sessionStorage.removeItem('selectedModel');
+        }
+        
+        // Mark that we have an initial submission
+        setHasInitialSubmission(true);
+        
+        // Store the template info for later use
+        setHomeUrlInput(''); // No URL in template mode
+        setHomeContextInput(projectPrompt);
+        
+        // Skip the home screen
+        setShowHomeScreen(false);
+        setHomeScreenFading(false);
+        
+        // Create sandbox first (with template name so API can use bundled template)
+        sandboxCreated = true;
+        const newSandboxData = await createSandbox(true, selectedTemplate !== 'blank' ? selectedTemplate : undefined);
+        
+        // Now handle template download and setup
+        // Skip if sandbox was already initialized with bundled template
+        if (selectedTemplate !== 'blank' && newSandboxData?.templateSource !== 'bundled') {
+          console.log('[handleHomeSubmit] Template not bundled, downloading from GitHub...');
+          await handleTemplateSetup(selectedTemplate, projectTitle || 'New Project', projectPrompt, newSandboxData);
+        } else if (selectedTemplate !== 'blank' && newSandboxData?.templateSource === 'bundled') {
+          // Template was already set up via bundled template
+          console.log('[handleHomeSubmit] Using bundled template, skipping handleTemplateSetup');
+          addChatMessage(
+            `🚀 Project "${projectTitle}" initialized with ${selectedTemplate} template!\n\n` +
+            `The sandbox is ready. What would you like to build?`,
+            'system'
+          );
+          setAiChatInput(projectPrompt);
+          
+          // Refresh sandbox files after setup
+          setTimeout(fetchSandboxFiles, 2000);
+        } else {
+          // Blank template - show message and pre-fill the prompt
+          addChatMessage(
+            `📄 Starting blank project: "${projectTitle}"\n\n` +
+            `The sandbox is ready. Describe what you want to build!`,
+            'system'
+          );
+          // Pre-fill the input with user's request
+          setAiChatInput(projectPrompt);
+        }
+        
+        return;
+      }
       
       // First check URL parameters (from home page navigation)
       const urlParam = searchParams.get('url');
@@ -361,13 +430,13 @@ function AISandboxPage() {
     }
   }, [chatMessages]);
 
-  // Auto-trigger generation when flag is set (from home page navigation)
+  // Auto-trigger generation when flag is set (from home page navigation with URL)
   useEffect(() => {
     if (shouldAutoGenerate && homeUrlInput && !showHomeScreen) {
       // Reset the flag
       setShouldAutoGenerate(false);
       
-      // Trigger generation after a short delay to ensure everything is set up
+      // URL-based clone mode only
       const timer = setTimeout(() => {
         console.log('[generation] Auto-triggering generation from URL params');
         startGeneration();
@@ -529,7 +598,7 @@ function AISandboxPage() {
 
   const sandboxCreationRef = useRef<boolean>(false);
   
-  const createSandbox = async (fromHomeScreen = false) => {
+  const createSandbox = async (fromHomeScreen = false, templateName?: string) => {
     // Prevent duplicate sandbox creation
     if (sandboxCreationRef.current) {
       console.log('[createSandbox] Sandbox creation already in progress, skipping...');
@@ -537,7 +606,7 @@ function AISandboxPage() {
     }
     
     sandboxCreationRef.current = true;
-    console.log('[createSandbox] Starting sandbox creation...');
+    console.log('[createSandbox] Starting sandbox creation...', templateName ? `with template: ${templateName}` : '');
     setLoading(true);
     setShowLoadingBackground(true);
     updateStatus('Creating sandbox...', false);
@@ -548,7 +617,7 @@ function AISandboxPage() {
       const response = await fetch('/api/create-ai-sandbox-v2', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({})
+        body: JSON.stringify({ template: templateName || 'react-vite' })
       });
       
       const data = await response.json();
@@ -621,6 +690,148 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       setStructureContent(JSON.stringify(structure, null, 2));
     } else {
       setStructureContent(structure || 'No structure available');
+    }
+  };
+
+  // Handle template setup - downloads template files and applies them to sandbox
+  const handleTemplateSetup = async (templateName: string, projectTitle: string, userPrompt: string, newSandboxData?: SandboxData | null) => {
+    console.log('[handleTemplateSetup] Starting template setup:', templateName);
+    console.log('[handleTemplateSetup] Sandbox data:', newSandboxData?.sandboxId, newSandboxData?.url);
+    
+    try {
+      // Get template config
+      const { getTemplateByName } = await import('@/config/templates');
+      const template = getTemplateByName(templateName);
+      
+      if (!template || !template.githubRepo) {
+        throw new Error(`Template "${templateName}" not found or has no GitHub repo`);
+      }
+      
+      addChatMessage(`Initializing "${projectTitle}" with ${template.label} template...`, 'system');
+      
+      // Download template files
+      console.log('[handleTemplateSetup] Downloading template files from:', template.githubRepo);
+      const downloadResponse = await fetch(`/api/download-template?repo=${encodeURIComponent(template.githubRepo)}`);
+      
+      if (!downloadResponse.ok) {
+        throw new Error(`Failed to download template: ${downloadResponse.statusText}`);
+      }
+      
+      const templateFiles = await downloadResponse.json();
+      
+      if (templateFiles.error) {
+        throw new Error(templateFiles.error);
+      }
+      
+      console.log(`[handleTemplateSetup] Downloaded ${templateFiles.length} files`);
+      
+      // Format files as Open Lovable format
+      const { formatAsOpenLovable } = await import('@/lib/template-project');
+      const formattedCode = formatAsOpenLovable(templateFiles, projectTitle);
+      
+      // Wait a moment for sandbox to be fully ready
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      // Apply the template files to sandbox
+      console.log('[handleTemplateSetup] Applying template files to sandbox...');
+      console.log('[handleTemplateSetup] Formatted code preview:', formattedCode.substring(0, 500));
+      
+      const applyResponse = await fetch('/api/apply-ai-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          response: formattedCode,
+          isEdit: false,
+          isTemplateImport: true  // Preserve exact paths from template
+        })
+      });
+      
+      const applyResult = await applyResponse.json();
+      console.log('[handleTemplateSetup] Apply result:', JSON.stringify(applyResult, null, 2));
+      
+      if (!applyResult.success) {
+        console.error('[handleTemplateSetup] Apply error:', applyResult);
+        throw new Error(applyResult.error || applyResult.message || 'Failed to apply template files');
+      }
+      
+      // Check if files were actually written to sandbox
+      if (applyResult.message?.includes('Create a sandbox to apply them')) {
+        console.error('[handleTemplateSetup] Sandbox not ready for file writes');
+        throw new Error('Sandbox not ready. Please try again.');
+      }
+      
+      console.log('[handleTemplateSetup] Template applied successfully');
+      console.log('[handleTemplateSetup] Files created:', applyResult.results?.filesCreated);
+      
+      // Use the passed sandbox data or fall back to state
+      const activeSandboxData = newSandboxData || sandboxData;
+      
+      // Refresh sandbox files after a delay
+      setTimeout(() => {
+        console.log('[handleTemplateSetup] Refreshing sandbox files...');
+        fetchSandboxFiles();
+      }, 2000);
+      
+      // Refresh iframe with the correct URL
+      const sandboxUrl = activeSandboxData?.url;
+      if (iframeRef.current && sandboxUrl) {
+        console.log('[handleTemplateSetup] Refreshing iframe with URL:', sandboxUrl);
+        setTimeout(() => {
+          if (iframeRef.current) {
+            iframeRef.current.src = sandboxUrl;
+          }
+        }, 3000);
+      } else {
+        console.log('[handleTemplateSetup] Cannot refresh iframe - no URL available');
+      }
+      
+      // Build file list for display
+      const fileList = applyResult.results?.filesCreated?.slice(0, 10).join('\n- ') || 
+                       templateFiles.slice(0, 10).map((f: any) => f.path).join('\n- ');
+      const totalFiles = applyResult.results?.filesCreated?.length || templateFiles.length;
+      const moreFiles = totalFiles > 10 ? `\n... and ${totalFiles - 10} more files` : '';
+      
+      addChatMessage(
+        `✅ Template "${template.label}" has been set up successfully!\n\n` +
+        `**Project:** ${projectTitle}\n` +
+        `**Files created (${totalFiles}):**\n- ${fileList}${moreFiles}\n\n` +
+        `The project is ready! You can now describe what you want me to build or modify.`,
+        'system'
+      );
+      
+      // Set conversation context to indicate we have an existing project
+      setConversationContext(prev => ({
+        ...prev,
+        currentProject: projectTitle,
+        appliedCode: [{
+          files: templateFiles.map((f: any) => f.path),
+          timestamp: new Date()
+        }]
+      }));
+      
+      // Store the user's original request for reference, but DON'T auto-trigger AI
+      // The user should explicitly ask for modifications
+      console.log('[handleTemplateSetup] Template setup complete. User prompt stored:', userPrompt);
+      
+      // Pre-fill the input with context about what the user wanted
+      // so they can easily continue
+      if (userPrompt && !userPrompt.toLowerCase().includes('create a react') && 
+          !userPrompt.toLowerCase().includes('create a vue') &&
+          !userPrompt.toLowerCase().includes('create a next')) {
+        // Only pre-fill if the prompt wasn't just "create a X project"
+        setAiChatInput(`Based on the ${template.label} template, ${userPrompt}`);
+      }
+      
+    } catch (error: any) {
+      console.error('[handleTemplateSetup] Error:', error);
+      addChatMessage(
+        `❌ Failed to set up template: ${error.message}\n\n` +
+        `The sandbox is ready but the template files could not be loaded.\n` +
+        `You can describe what you want to build and I'll create it from scratch.`,
+        'error'
+      );
+      // Pre-fill with user's request so they can easily continue
+      setAiChatInput(userPrompt);
     }
   };
 
@@ -1067,9 +1278,11 @@ Tip: I automatically detect and install npm packages from your code imports (lik
   };
 
   const fetchSandboxFiles = async () => {
-    if (!sandboxData) return;
+    // Don't check sandboxData state - the API has its own global state
+    // This allows fetching files even when React state hasn't updated yet
     
     try {
+      console.log('[fetchSandboxFiles] Fetching files from sandbox...');
       const response = await fetch('/api/get-sandbox-files', {
         method: 'GET',
         headers: {
@@ -1080,10 +1293,53 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       if (response.ok) {
         const data = await response.json();
         if (data.success) {
-          setSandboxFiles(data.files || {});
+          const files = data.files || {};
+          setSandboxFiles(files);
           setFileStructure(data.structure || '');
-          console.log('[fetchSandboxFiles] Updated file list:', Object.keys(data.files || {}).length, 'files');
+          console.log('[fetchSandboxFiles] Updated file list:', Object.keys(files).length, 'files');
+          
+          // Also populate generationProgress.files so the Code tab can display them
+          // This is needed when files are loaded from a template (not from AI generation)
+          const fileEntries = Object.entries(files);
+          if (fileEntries.length > 0 && generationProgress.files.length === 0) {
+            const progressFiles = fileEntries.map(([path, content]) => {
+              // Determine file type from extension
+              const ext = path.split('.').pop()?.toLowerCase() || '';
+              let type = 'utility';
+              if (['tsx', 'jsx'].includes(ext)) type = 'component';
+              else if (ext === 'css') type = 'style';
+              else if (ext === 'json') type = 'config';
+              
+              return {
+                path,
+                content: content as string,
+                type,
+                completed: true
+              };
+            });
+            
+            setGenerationProgress(prev => ({
+              ...prev,
+              files: progressFiles,
+              isGenerating: false,
+              status: 'Files loaded from sandbox'
+            }));
+            
+            // Auto-select the first source file for display
+            const firstSourceFile = progressFiles.find(f => 
+              f.path.endsWith('.tsx') || f.path.endsWith('.jsx') || f.path.endsWith('.ts') || f.path.endsWith('.js')
+            );
+            if (firstSourceFile && !selectedFile) {
+              setSelectedFile(firstSourceFile.path);
+            }
+            
+            console.log('[fetchSandboxFiles] Populated generationProgress.files with', progressFiles.length, 'files');
+          }
+        } else {
+          console.log('[fetchSandboxFiles] API returned success=false:', data.error);
         }
+      } else {
+        console.log('[fetchSandboxFiles] API returned status:', response.status);
       }
     } catch (error) {
       console.error('[fetchSandboxFiles] Error fetching files:', error);

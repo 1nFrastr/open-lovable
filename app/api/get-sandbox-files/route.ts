@@ -1,15 +1,22 @@
 import { NextResponse } from 'next/server';
 import { parseJavaScriptFile, buildComponentTree } from '@/lib/file-parser';
 import { FileManifest, FileInfo, RouteInfo } from '@/types/file-manifest';
-// SandboxState type used implicitly through global.activeSandbox
+import { SandboxProvider } from '@/lib/sandbox/types';
 
 declare global {
   var activeSandbox: any;
+  var activeSandboxProvider: SandboxProvider | null;
+  var sandboxState: any;
 }
 
 export async function GET() {
   try {
-    if (!global.activeSandbox) {
+    // Support both legacy activeSandbox and new activeSandboxProvider
+    const provider = global.activeSandboxProvider;
+    const legacySandbox = global.activeSandbox;
+    
+    if (!provider && !legacySandbox) {
+      console.log('[get-sandbox-files] No active sandbox found');
       return NextResponse.json({
         success: false,
         error: 'No active sandbox'
@@ -17,82 +24,143 @@ export async function GET() {
     }
 
     console.log('[get-sandbox-files] Fetching and analyzing file structure...');
+    console.log('[get-sandbox-files] Using provider:', !!provider, 'Legacy sandbox:', !!legacySandbox);
     
-    // Get list of all relevant files
-    const findResult = await global.activeSandbox.runCommand({
-      cmd: 'find',
-      args: [
-        '.',
-        '-name', 'node_modules', '-prune', '-o',
-        '-name', '.git', '-prune', '-o',
-        '-name', 'dist', '-prune', '-o',
-        '-name', 'build', '-prune', '-o',
-        '-type', 'f',
-        '(',
-        '-name', '*.jsx',
-        '-o', '-name', '*.js',
-        '-o', '-name', '*.tsx',
-        '-o', '-name', '*.ts',
-        '-o', '-name', '*.css',
-        '-o', '-name', '*.json',
-        ')',
-        '-print'
-      ]
-    });
+    let fileList: string[] = [];
     
-    if (findResult.exitCode !== 0) {
-      throw new Error('Failed to list files');
+    // Use provider's listFiles method if available
+    if (provider) {
+      try {
+        fileList = await provider.listFiles();
+        console.log('[get-sandbox-files] Provider returned', fileList.length, 'files');
+      } catch (e) {
+        console.error('[get-sandbox-files] Provider listFiles failed:', e);
+        // Fall through to legacy method
+      }
     }
     
-    const fileList = (await findResult.stdout()).split('\n').filter((f: string) => f.trim());
-    console.log('[get-sandbox-files] Found', fileList.length, 'files');
+    // Fallback to legacy method
+    if (fileList.length === 0 && legacySandbox) {
+      const findResult = await legacySandbox.runCommand({
+        cmd: 'find',
+        args: [
+          '.',
+          '-name', 'node_modules', '-prune', '-o',
+          '-name', '.git', '-prune', '-o',
+          '-name', 'dist', '-prune', '-o',
+          '-name', 'build', '-prune', '-o',
+          '-type', 'f',
+          '(',
+          '-name', '*.jsx',
+          '-o', '-name', '*.js',
+          '-o', '-name', '*.tsx',
+          '-o', '-name', '*.ts',
+          '-o', '-name', '*.css',
+          '-o', '-name', '*.json',
+          ')',
+          '-print'
+        ]
+      });
+      
+      if (findResult.exitCode !== 0) {
+        throw new Error('Failed to list files');
+      }
+      
+      fileList = (await findResult.stdout()).split('\n').filter((f: string) => f.trim());
+    }
+    
+    // Filter to only relevant file types
+    fileList = fileList.filter((f: string) => {
+      const ext = f.split('.').pop()?.toLowerCase();
+      return ['jsx', 'js', 'tsx', 'ts', 'css', 'json', 'html'].includes(ext || '');
+    });
+    
+    console.log('[get-sandbox-files] Found', fileList.length, 'files after filtering');
     
     // Read content of each file (limit to reasonable sizes)
     const filesContent: Record<string, string> = {};
     
     for (const filePath of fileList) {
       try {
-        // Check file size first
-        const statResult = await global.activeSandbox.runCommand({
-          cmd: 'stat',
-          args: ['-f', '%z', filePath]
-        });
+        // Remove leading './' from path
+        const relativePath = filePath.replace(/^\.\//, '');
         
-        if (statResult.exitCode === 0) {
-          const fileSize = parseInt(await statResult.stdout());
+        // Skip node_modules and other unwanted paths
+        if (relativePath.includes('node_modules') || relativePath.includes('.git')) {
+          continue;
+        }
+        
+        let content: string | null = null;
+        
+        // Use provider's readFile method if available
+        if (provider) {
+          try {
+            content = await provider.readFile(relativePath);
+          } catch (e) {
+            // File might not exist or be unreadable
+            continue;
+          }
+        } else if (legacySandbox) {
+          // Legacy method: check file size first
+          const statResult = await legacySandbox.runCommand({
+            cmd: 'stat',
+            args: ['-f', '%z', filePath]
+          });
           
-          // Only read files smaller than 10KB
-          if (fileSize < 10000) {
-            const catResult = await global.activeSandbox.runCommand({
-              cmd: 'cat',
-              args: [filePath]
-            });
+          if (statResult.exitCode === 0) {
+            const fileSize = parseInt(await statResult.stdout());
             
-            if (catResult.exitCode === 0) {
-              const content = await catResult.stdout();
-              // Remove leading './' from path
-              const relativePath = filePath.replace(/^\.\//, '');
-              filesContent[relativePath] = content;
+            // Only read files smaller than 10KB
+            if (fileSize < 10000) {
+              const catResult = await legacySandbox.runCommand({
+                cmd: 'cat',
+                args: [filePath]
+              });
+              
+              if (catResult.exitCode === 0) {
+                content = await catResult.stdout();
+              }
             }
           }
         }
+        
+        if (content !== null) {
+          filesContent[relativePath] = content;
+        }
       } catch (parseError) {
-        console.debug('Error parsing component info:', parseError);
+        console.debug('Error reading file:', filePath, parseError);
         // Skip files that can't be read
         continue;
       }
     }
     
     // Get directory structure
-    const treeResult = await global.activeSandbox.runCommand({
-      cmd: 'find',
-      args: ['.', '-type', 'd', '-not', '-path', '*/node_modules*', '-not', '-path', '*/.git*']
-    });
-    
     let structure = '';
-    if (treeResult.exitCode === 0) {
-      const dirs = (await treeResult.stdout()).split('\n').filter((d: string) => d.trim());
-      structure = dirs.slice(0, 50).join('\n'); // Limit to 50 lines
+    
+    if (provider) {
+      // Build structure from file list
+      const dirs = new Set<string>();
+      for (const file of fileList) {
+        const parts = file.split('/');
+        let path = '';
+        for (let i = 0; i < parts.length - 1; i++) {
+          path = path ? `${path}/${parts[i]}` : parts[i];
+          if (!path.includes('node_modules') && !path.includes('.git')) {
+            dirs.add(path);
+          }
+        }
+      }
+      structure = Array.from(dirs).slice(0, 50).join('\n');
+    } else if (legacySandbox) {
+      const treeResult = await legacySandbox.runCommand({
+        cmd: 'find',
+        args: ['.', '-type', 'd', '-not', '-path', '*/node_modules*', '-not', '-path', '*/.git*']
+      });
+      
+      if (treeResult.exitCode === 0) {
+        const dirs = (await treeResult.stdout()).split('\n').filter((d: string) => d.trim());
+        structure = dirs.slice(0, 50).join('\n'); // Limit to 50 lines
+      }
     }
     
     // Build enhanced file manifest

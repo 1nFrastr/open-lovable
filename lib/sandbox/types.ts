@@ -53,6 +53,18 @@ export abstract class SandboxProvider {
   abstract isAlive(): boolean;
   
   // Optional methods that providers can override
+  
+  /**
+   * Setup sandbox from template files (bolt.diy style)
+   * This is the preferred method for initialization
+   */
+  async setupFromTemplate(files: Array<{ path: string; content: string }>): Promise<void> {
+    throw new Error('setupFromTemplate not implemented for this provider');
+  }
+  
+  /**
+   * @deprecated Use setupFromTemplate instead
+   */
   async setupViteApp(): Promise<void> {
     // Default implementation for setting up a Vite React app
     throw new Error('setupViteApp not implemented for this provider');

@@ -228,189 +228,53 @@ export class E2BProvider extends SandboxProvider {
     };
   }
 
-  async setupViteApp(): Promise<void> {
+  /**
+   * Setup sandbox from template files (bolt.diy style)
+   * This is the preferred method - downloads template from GitHub and runs npm install/dev
+   */
+  async setupFromTemplate(files: Array<{ path: string; content: string }>): Promise<void> {
     if (!this.sandbox) {
       throw new Error('No active sandbox');
     }
 
-    
-    // Write all files in a single Python script
-    const setupScript = `
-import os
-import json
+    console.log(`[E2BProvider] Setting up from template with ${files.length} files...`);
 
-print('Setting up React app with Vite and Tailwind...')
-
-# Create directory structure
-os.makedirs('/home/user/app/src', exist_ok=True)
-
-# Package.json
-package_json = {
-    "name": "sandbox-app",
-    "version": "1.0.0",
-    "type": "module",
-    "scripts": {
-        "dev": "vite --host",
-        "build": "vite build",
-        "preview": "vite preview"
-    },
-    "dependencies": {
-        "react": "^18.2.0",
-        "react-dom": "^18.2.0"
-    },
-    "devDependencies": {
-        "@vitejs/plugin-react": "^4.0.0",
-        "vite": "^4.3.9",
-        "tailwindcss": "^3.3.0",
-        "postcss": "^8.4.31",
-        "autoprefixer": "^10.4.16"
+    // Write all template files to sandbox
+    for (const file of files) {
+      await this.writeFile(file.path, file.content);
+      this.existingFiles.add(file.path);
     }
-}
 
-with open('/home/user/app/package.json', 'w') as f:
-    json.dump(package_json, f, indent=2)
-print('✓ package.json')
+    console.log('[E2BProvider] All template files written, running npm install...');
 
-# Vite config
-vite_config = """import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-
-export default defineConfig({
-  plugins: [react()],
-  server: {
-    host: '0.0.0.0',
-    port: 5173,
-    strictPort: true,
-    hmr: false,
-    allowedHosts: ['.e2b.app', '.e2b.dev', '.vercel.run', 'localhost', '127.0.0.1']
-  }
-})"""
-
-with open('/home/user/app/vite.config.js', 'w') as f:
-    f.write(vite_config)
-print('✓ vite.config.js')
-
-# Tailwind config
-tailwind_config = """/** @type {import('tailwindcss').Config} */
-export default {
-  content: [
-    "./index.html",
-    "./src/**/*.{js,ts,jsx,tsx}",
-  ],
-  theme: {
-    extend: {},
-  },
-  plugins: [],
-}"""
-
-with open('/home/user/app/tailwind.config.js', 'w') as f:
-    f.write(tailwind_config)
-print('✓ tailwind.config.js')
-
-# PostCSS config
-postcss_config = """export default {
-  plugins: {
-    tailwindcss: {},
-    autoprefixer: {},
-  },
-}"""
-
-with open('/home/user/app/postcss.config.js', 'w') as f:
-    f.write(postcss_config)
-print('✓ postcss.config.js')
-
-# Index.html
-index_html = """<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Sandbox App</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
-</html>"""
-
-with open('/home/user/app/index.html', 'w') as f:
-    f.write(index_html)
-print('✓ index.html')
-
-# Main.jsx
-main_jsx = """import React from 'react'
-import ReactDOM from 'react-dom/client'
-import App from './App.jsx'
-import './index.css'
-
-ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-)"""
-
-with open('/home/user/app/src/main.jsx', 'w') as f:
-    f.write(main_jsx)
-print('✓ src/main.jsx')
-
-# App.jsx
-app_jsx = """function App() {
-  return (
-    <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center p-4">
-      <div className="text-center max-w-2xl">
-        <p className="text-lg text-gray-400">
-          Sandbox Ready<br/>
-          Start building your React app with Vite and Tailwind CSS!
-        </p>
-      </div>
-    </div>
-  )
-}
-
-export default App"""
-
-with open('/home/user/app/src/App.jsx', 'w') as f:
-    f.write(app_jsx)
-print('✓ src/App.jsx')
-
-# Index.css
-index_css = """@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
-body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-  background-color: rgb(17 24 39);
-}"""
-
-with open('/home/user/app/src/index.css', 'w') as f:
-    f.write(index_css)
-print('✓ src/index.css')
-
-print('\\nAll files created successfully!')
-`;
-
-    await this.sandbox.runCode(setupScript);
-    
-    // Install dependencies
-    await this.sandbox.runCode(`
+    // Run npm install
+    const installResult = await this.sandbox.runCode(`
 import subprocess
+import os
 
-print('Installing npm packages...')
+os.chdir('/home/user/app')
+
+print('Installing dependencies...')
 result = subprocess.run(
-    ['npm', 'install'],
-    cwd='/home/user/app',
+    ['npm', 'install', '--legacy-peer-deps'],
     capture_output=True,
-    text=True
+    text=True,
+    timeout=300
 )
 
-if result.returncode == 0:
-    print('✓ Dependencies installed successfully')
-else:
-    print(f'⚠ Warning: npm install had issues: {result.stderr}')
+print("STDOUT:")
+print(result.stdout)
+if result.stderr:
+    print("\\nSTDERR:")
+    print(result.stderr)
+print(f"\\nReturn code: {result.returncode}")
     `);
-    
-    // Start Vite dev server
+
+    const installOutput = installResult.logs.stdout.join('\n');
+    console.log('[E2BProvider] npm install output:', installOutput.slice(0, 500));
+
+    // Start dev server
+    console.log('[E2BProvider] Starting dev server...');
     await this.sandbox.runCode(`
 import subprocess
 import os
@@ -418,13 +282,15 @@ import time
 
 os.chdir('/home/user/app')
 
-# Kill any existing Vite processes
+# Kill any existing dev processes
 subprocess.run(['pkill', '-f', 'vite'], capture_output=True)
+subprocess.run(['pkill', '-f', 'next'], capture_output=True)
 time.sleep(1)
 
-# Start Vite dev server
+# Start dev server
 env = os.environ.copy()
 env['FORCE_COLOR'] = '0'
+env['CI'] = 'true'
 
 process = subprocess.Popen(
     ['npm', 'run', 'dev'],
@@ -433,22 +299,64 @@ process = subprocess.Popen(
     env=env
 )
 
-print(f'✓ Vite dev server started with PID: {process.pid}')
+print(f'✓ Dev server started with PID: {process.pid}')
 print('Waiting for server to be ready...')
     `);
-    
-    // Wait for Vite to be ready
+
+    // Wait for dev server to be ready
     await new Promise(resolve => setTimeout(resolve, appConfig.e2b.viteStartupDelay));
     
-    // Track initial files
-    this.existingFiles.add('src/App.jsx');
-    this.existingFiles.add('src/main.jsx');
-    this.existingFiles.add('src/index.css');
-    this.existingFiles.add('index.html');
-    this.existingFiles.add('package.json');
-    this.existingFiles.add('vite.config.js');
-    this.existingFiles.add('tailwind.config.js');
-    this.existingFiles.add('postcss.config.js');
+    console.log('[E2BProvider] Template setup complete');
+  }
+
+  /**
+   * @deprecated Use setupFromTemplate with bundled templates instead
+   * Minimal fallback - creates absolute bare minimum to get React running
+   */
+  async setupViteApp(): Promise<void> {
+    console.warn('[E2BProvider] setupViteApp is deprecated. Use bundled templates instead.');
+    
+    if (!this.sandbox) {
+      throw new Error('No active sandbox');
+    }
+
+    // Absolute minimal fallback - just enough to run React
+    const minimalFiles = [
+      {
+        path: 'package.json',
+        content: JSON.stringify({
+          name: 'sandbox-app',
+          private: true,
+          type: 'module',
+          scripts: { dev: 'vite --host', build: 'vite build' },
+          dependencies: { react: '^18.3.1', 'react-dom': '^18.3.1' },
+          devDependencies: { '@vitejs/plugin-react': '^4.3.3', vite: '^5.4.10' }
+        }, null, 2)
+      },
+      {
+        path: 'vite.config.js',
+        content: `import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+export default defineConfig({
+  plugins: [react()],
+  server: { host: '0.0.0.0', port: 5173, strictPort: true, hmr: false, allowedHosts: ['.e2b.app', '.e2b.dev', 'localhost'] }
+})`
+      },
+      {
+        path: 'index.html',
+        content: `<!doctype html><html><head><meta charset="UTF-8"/><title>App</title></head><body><div id="root"></div><script type="module" src="/src/main.jsx"></script></body></html>`
+      },
+      {
+        path: 'src/main.jsx',
+        content: `import React from 'react'\nimport ReactDOM from 'react-dom/client'\nimport App from './App'\nReactDOM.createRoot(document.getElementById('root')).render(<React.StrictMode><App/></React.StrictMode>)`
+      },
+      {
+        path: 'src/App.jsx',
+        content: `export default function App() { return <div style={{padding:'2rem'}}><h1>Sandbox Ready</h1></div> }`
+      }
+    ];
+
+    await this.setupFromTemplate(minimalFiles);
   }
 
   async restartViteServer(): Promise<void> {

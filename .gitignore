@@ -51,6 +51,12 @@ e2b-template-*
 .vscode/
 .idea/
 
+# Reference symlinks
+/reference/
+
+# Workspace file
+*.code-workspace
+
 # Temporary files
 *.tmp
 *.temp
