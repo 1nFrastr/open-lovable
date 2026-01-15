@@ -25,6 +25,7 @@ import {
 } from '@/lib/icons';
 import { motion } from 'framer-motion';
 import CodeApplicationProgress, { type CodeApplicationState } from '@/components/CodeApplicationProgress';
+import IframeBlankDetector from '@/components/IframeBlankDetector';
 import dynamic from 'next/dynamic';
 
 // Dynamic import for Terminal component (requires browser APIs)
@@ -2086,6 +2087,19 @@ Tip: I automatically detect and install npm packages from your code imports (lik
               title="Open Lovable Sandbox"
               allow="clipboard-write"
               sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+            />
+            
+            {/* Auto-detect blank iframe and refresh */}
+            <IframeBlankDetector
+              iframeRef={iframeRef as React.RefObject<HTMLIFrameElement>}
+              sandboxUrl={sandboxData.url}
+              enabled={appConfig.codeApplication.blankDetection.enabled && !generationProgress.isGenerating && !codeApplicationState.stage}
+              maxRetries={appConfig.codeApplication.blankDetection.maxRetries}
+              retryDelay={appConfig.codeApplication.blankDetection.retryDelay}
+              checkDelay={appConfig.codeApplication.blankDetection.checkDelay}
+              onRetry={(attempt) => {
+                console.log(`[IframeBlankDetector] Auto-refresh attempt ${attempt}/${appConfig.codeApplication.blankDetection.maxRetries}`);
+              }}
             />
             
             {/* Package installation overlay - shows when installing packages or applying code */}

@@ -130,6 +130,18 @@ export const appConfig = {
     
     // Maximum number of truncation recovery attempts per file
     maxTruncationRecoveryAttempts: 1,
+    
+    // Blank iframe detection settings
+    blankDetection: {
+      // Enable automatic blank page detection and refresh
+      enabled: true,
+      // Maximum number of auto-refresh attempts
+      maxRetries: 3,
+      // Delay between retries (milliseconds)
+      retryDelay: 2000,
+      // Delay before first check after iframe load (milliseconds)
+      checkDelay: 3000,
+    },
   },
   
   // UI Configuration
