@@ -618,8 +618,13 @@ TYPESCRIPT (required):
 FILE CONVENTIONS:
 - Components: src/components/Name.tsx
 - Main: src/App.tsx
-- Entry: src/main.tsx
+- Entry: src/main.tsx (DO NOT MODIFY - contains critical CSS import)
 - Styles: src/index.css
+
+🚨 NEVER MODIFY src/main.tsx 🚨
+The main.tsx file contains the critical CSS import (import './index.css') that enables Tailwind CSS.
+If you modify or regenerate main.tsx without this import, ALL STYLES WILL BREAK.
+Only modify main.tsx if explicitly requested AND always preserve: import './index.css'
 
 ${conversationContext}
 

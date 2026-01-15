@@ -19,6 +19,22 @@ export class E2BProvider extends SandboxProvider {
   private ptySession: PtySession | null = null;
   private ptyOutputBuffer: string[] = [];
   private ptyOutputListeners: Set<(data: string) => void> = new Set();
+  private usingCustomTemplate: boolean = false;
+
+  /**
+   * Check if a custom template is configured
+   */
+  hasCustomTemplate(): boolean {
+    const templateId = this.config.e2b?.template || appConfig.e2b.templateId;
+    return !!templateId;
+  }
+
+  /**
+   * Check if sandbox was created with custom template
+   */
+  isUsingCustomTemplate(): boolean {
+    return this.usingCustomTemplate;
+  }
 
   /**
    * Attempt to reconnect to an existing E2B sandbox
@@ -38,6 +54,9 @@ export class E2BProvider extends SandboxProvider {
     }
   }
 
+  /**
+   * Create a sandbox - uses custom template if configured, otherwise creates base sandbox
+   */
   async createSandbox(): Promise<SandboxInfo> {
     try {
       
@@ -53,12 +72,28 @@ export class E2BProvider extends SandboxProvider {
       
       // Clear existing files tracking
       this.existingFiles.clear();
+      this.usingCustomTemplate = false;
 
-      // Create base sandbox
-      this.sandbox = await Sandbox.create({ 
-        apiKey: this.config.e2b?.apiKey || process.env.E2B_API_KEY,
-        timeoutMs: this.config.e2b?.timeoutMs || appConfig.e2b.timeoutMs
-      });
+      // Check if custom template is configured
+      const templateId = this.config.e2b?.template || appConfig.e2b.templateId;
+      
+      if (templateId) {
+        // Create sandbox from custom template (dependencies pre-installed)
+        // E2B SDK signature: Sandbox.create(template: string, opts?: SandboxOpts)
+        console.log(`[E2BProvider] Creating sandbox from custom template: ${templateId}`);
+        this.sandbox = await Sandbox.create(templateId, { 
+          apiKey: this.config.e2b?.apiKey || process.env.E2B_API_KEY,
+          timeoutMs: this.config.e2b?.timeoutMs || appConfig.e2b.timeoutMs
+        });
+        this.usingCustomTemplate = true;
+      } else {
+        // Create base sandbox (will need npm install later)
+        console.log('[E2BProvider] Creating base sandbox (no custom template)');
+        this.sandbox = await Sandbox.create({ 
+          apiKey: this.config.e2b?.apiKey || process.env.E2B_API_KEY,
+          timeoutMs: this.config.e2b?.timeoutMs || appConfig.e2b.timeoutMs
+        });
+      }
       
       const sandboxId = (this.sandbox as any).sandboxId || Date.now().toString();
       const host = (this.sandbox as any).getHost(appConfig.e2b.vitePort);
@@ -89,53 +124,32 @@ export class E2BProvider extends SandboxProvider {
       throw new Error('No active sandbox');
     }
 
-    // Use JSON output to cleanly separate stdout, stderr, and exit code
-    const result = await this.sandbox.runCode(`
-import subprocess
-import os
-import json
-import base64
-
-os.chdir('/home/user/app')
-result = subprocess.run(${JSON.stringify(command.split(' '))}, 
-                      capture_output=True, 
-                      shell=False)
-
-# Use base64 encoding to handle binary output safely
-output = {
-    "stdout": base64.b64encode(result.stdout).decode('ascii'),
-    "stderr": base64.b64encode(result.stderr).decode('ascii'),
-    "exitCode": result.returncode
-}
-print("__JSON_RESULT__" + json.dumps(output))
-    `);
-    
-    const rawOutput = result.logs.stdout.join('\n');
-    
-    // Parse the JSON result from the output
-    const jsonMatch = rawOutput.match(/__JSON_RESULT__(.+)/);
-    if (jsonMatch) {
-      try {
-        const parsed = JSON.parse(jsonMatch[1]);
-        return {
-          stdout: Buffer.from(parsed.stdout, 'base64').toString('utf-8'),
-          stderr: Buffer.from(parsed.stderr, 'base64').toString('utf-8'),
-          exitCode: parsed.exitCode,
-          success: parsed.exitCode === 0
-        };
-      } catch (e) {
-        // Fall back to raw output if JSON parsing fails
-        console.error('[E2BProvider] Failed to parse JSON result:', e);
-      }
+    // Use E2B commands.run instead of runCode (works with Node.js templates)
+    try {
+      const result = await this.sandbox.commands.run(command, {
+        cwd: '/home/user/app',
+        timeoutMs: 60000, // 1 minute timeout
+        envs: {
+          FORCE_COLOR: '0',
+          CI: 'true'
+        }
+      });
+      
+      return {
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.exitCode,
+        success: result.exitCode === 0
+      };
+    } catch (error) {
+      console.error('[E2BProvider] runCommand error:', error);
+      return {
+        stdout: '',
+        stderr: error instanceof Error ? error.message : 'Unknown error',
+        exitCode: 1,
+        success: false
+      };
     }
-    
-    // Fallback: return raw output
-    return {
-      stdout: rawOutput,
-      stderr: result.logs.stderr.join('\n'),
-      exitCode: result.error ? 1 : 0,
-      success: !result.error
-    };
   }
 
   async writeFile(path: string, content: string): Promise<void> {
@@ -145,26 +159,21 @@ print("__JSON_RESULT__" + json.dumps(output))
 
     const fullPath = path.startsWith('/') ? path : `/home/user/app/${path}`;
     
-    // Use the E2B filesystem API to write the file
-    // Note: E2B SDK uses files.write() method
-    if ((this.sandbox as any).files && typeof (this.sandbox as any).files.write === 'function') {
-      // Use the files.write API if available
-      await (this.sandbox as any).files.write(fullPath, Buffer.from(content));
-    } else {
-      // Fallback to Python code execution
-      await this.sandbox.runCode(`
-        import os
-
-        # Ensure directory exists
-        dir_path = os.path.dirname("${fullPath}")
-        os.makedirs(dir_path, exist_ok=True)
-
-        # Write file
-        with open("${fullPath}", 'w') as f:
-            f.write(${JSON.stringify(content)})
-        print(f"✓ Written: ${fullPath}")
-      `);
+    // Ensure directory exists using mkdir -p
+    const dirPath = fullPath.substring(0, fullPath.lastIndexOf('/'));
+    if (dirPath) {
+      try {
+        await this.sandbox.commands.run(`mkdir -p "${dirPath}"`, {
+          cwd: '/home/user/app',
+          timeoutMs: 5000
+        });
+      } catch {
+        // Directory might already exist
+      }
     }
+    
+    // Use the E2B filesystem API to write the file
+    await this.sandbox.files.write(fullPath, content);
     
     this.existingFiles.add(path);
   }
@@ -176,13 +185,9 @@ print("__JSON_RESULT__" + json.dumps(output))
 
     const fullPath = path.startsWith('/') ? path : `/home/user/app/${path}`;
     
-    const result = await this.sandbox.runCode(`
-      with open("${fullPath}", 'r') as f:
-          content = f.read()
-      print(content)
-    `);
-    
-    return result.logs.stdout.join('\n');
+    // Use E2B files API instead of runCode (works with Node.js templates)
+    const content = await this.sandbox.files.read(fullPath);
+    return content;
   }
 
   async listFiles(directory: string = '/home/user/app'): Promise<string[]> {
@@ -190,27 +195,22 @@ print("__JSON_RESULT__" + json.dumps(output))
       throw new Error('No active sandbox');
     }
 
-    const result = await this.sandbox.runCode(`
-      import os
-      import json
-
-      def list_files(path):
-          files = []
-          for root, dirs, filenames in os.walk(path):
-              # Skip node_modules and .git
-              dirs[:] = [d for d in dirs if d not in ['node_modules', '.git', '.next', 'dist', 'build']]
-              for filename in filenames:
-                  rel_path = os.path.relpath(os.path.join(root, filename), path)
-                  files.append(rel_path)
-          return files
-
-      files = list_files("${directory}")
-      print(json.dumps(files))
-    `);
-    
+    // Use E2B commands.run with find command instead of runCode
+    // This works with Node.js templates that don't have Python
     try {
-      return JSON.parse(result.logs.stdout.join(''));
-    } catch {
+      const result = await this.sandbox.commands.run(
+        `find ${directory} -type f \\( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" -o -name "*.json" -o -name "*.css" -o -name "*.html" -o -name "*.md" \\) ! -path "*/node_modules/*" ! -path "*/.git/*" ! -path "*/.next/*" ! -path "*/dist/*" ! -path "*/build/*" 2>/dev/null | sort`,
+        { cwd: directory, timeoutMs: 30000 }
+      );
+      
+      const files = result.stdout
+        .split('\n')
+        .filter((line: string) => line.trim())
+        .map((file: string) => file.replace(`${directory}/`, ''));
+      
+      return files;
+    } catch (error) {
+      console.error('[E2BProvider] listFiles error:', error);
       return [];
     }
   }
@@ -220,50 +220,50 @@ print("__JSON_RESULT__" + json.dumps(output))
       throw new Error('No active sandbox');
     }
 
-    const packageList = packages.join(' ');
     const flags = appConfig.packages.useLegacyPeerDeps ? '--legacy-peer-deps' : '';
+    const cmd = `npm install ${flags} ${packages.join(' ')}`;
     
-    
-    const result = await this.sandbox.runCode(`
-      import subprocess
-      import os
-
-      os.chdir('/home/user/app')
-
-      # Install packages
-      result = subprocess.run(
-          ['npm', 'install', ${flags ? `'${flags}',` : ''} ${packages.map(p => `'${p}'`).join(', ')}],
-          capture_output=True,
-          text=True
-      )
-
-      print("STDOUT:")
-      print(result.stdout)
-      if result.stderr:
-          print("\\nSTDERR:")
-          print(result.stderr)
-      print(f"\\nReturn code: {result.returncode}")
-    `);
-    
-    const output = result.logs.stdout.join('\n');
-    const stderr = result.logs.stderr.join('\n');
-    
-    // Restart Vite if configured
-    if (appConfig.packages.autoRestartVite && !result.error) {
-      await this.restartViteServer();
+    // Use E2B commands.run instead of runCode
+    try {
+      const result = await this.sandbox.commands.run(cmd, {
+        cwd: '/home/user/app',
+        timeoutMs: 300000, // 5 minutes for npm install
+        envs: {
+          FORCE_COLOR: '0',
+          CI: 'true'
+        }
+      });
+      
+      // Restart Vite if configured
+      if (appConfig.packages.autoRestartVite && result.exitCode === 0) {
+        await this.restartViteServer();
+      }
+      
+      return {
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.exitCode,
+        success: result.exitCode === 0
+      };
+    } catch (error) {
+      console.error('[E2BProvider] installPackages error:', error);
+      return {
+        stdout: '',
+        stderr: error instanceof Error ? error.message : 'Unknown error',
+        exitCode: 1,
+        success: false
+      };
     }
-    
-    return {
-      stdout: output,
-      stderr,
-      exitCode: result.error ? 1 : 0,
-      success: !result.error
-    };
   }
 
   /**
    * Setup sandbox from template files (bolt.diy style)
    * This is the preferred method - downloads template from GitHub and runs npm install/dev
+   * 
+   * When using a custom E2B template (with pre-installed dependencies):
+   * - Skips npm install (dependencies already in the image)
+   * - Only starts the dev server
+   * - Uses reduced startup delay
    */
   async setupFromTemplate(files: Array<{ path: string; content: string }>): Promise<void> {
     if (!this.sandbox) {
@@ -271,6 +271,7 @@ print("__JSON_RESULT__" + json.dumps(output))
     }
 
     console.log(`[E2BProvider] Setting up from template with ${files.length} files...`);
+    console.log(`[E2BProvider] Using custom template: ${this.usingCustomTemplate}`);
 
     // Write all template files to sandbox
     for (const file of files) {
@@ -278,68 +279,105 @@ print("__JSON_RESULT__" + json.dumps(output))
       this.existingFiles.add(file.path);
     }
 
-    console.log('[E2BProvider] All template files written, running npm install...');
+    console.log('[E2BProvider] All template files written');
 
-    // Run npm install
-    const installResult = await this.sandbox.runCode(`
-import subprocess
-import os
-
-os.chdir('/home/user/app')
-
-print('Installing dependencies...')
-result = subprocess.run(
-    ['npm', 'install', '--legacy-peer-deps'],
-    capture_output=True,
-    text=True,
-    timeout=300
-)
-
-print("STDOUT:")
-print(result.stdout)
-if result.stderr:
-    print("\\nSTDERR:")
-    print(result.stderr)
-print(f"\\nReturn code: {result.returncode}")
-    `);
-
-    const installOutput = installResult.logs.stdout.join('\n');
-    console.log('[E2BProvider] npm install output:', installOutput.slice(0, 500));
+    // Skip npm install if using custom template (dependencies pre-installed)
+    if (!this.usingCustomTemplate) {
+      console.log('[E2BProvider] Running npm install (no custom template)...');
+      
+      try {
+        const installResult = await this.sandbox.commands.run('npm install --legacy-peer-deps', {
+          cwd: '/home/user/app',
+          timeoutMs: 300000, // 5 minutes
+          envs: {
+            FORCE_COLOR: '0',
+            CI: 'true'
+          }
+        });
+        console.log('[E2BProvider] npm install output:', installResult.stdout.slice(0, 500));
+      } catch (error) {
+        console.error('[E2BProvider] npm install error:', error);
+      }
+    } else {
+      console.log('[E2BProvider] Skipping npm install (using custom template with pre-installed dependencies)');
+    }
 
     // Start dev server
     console.log('[E2BProvider] Starting dev server...');
-    await this.sandbox.runCode(`
-import subprocess
-import os
-import time
+    
+    // Kill any existing dev processes first
+    try {
+      await this.sandbox.commands.run('pkill -f vite || true', { 
+        cwd: '/home/user/app',
+        timeoutMs: 5000 
+      });
+    } catch {
+      // Ignore - process might not exist
+    }
+    
+    // Start dev server in background
+    await this.sandbox.commands.run('npm run dev', {
+      cwd: '/home/user/app',
+      background: true,
+      envs: {
+        FORCE_COLOR: '0',
+        CI: 'true'
+      }
+    });
+    
+    console.log('[E2BProvider] Dev server started in background');
 
-os.chdir('/home/user/app')
-
-# Kill any existing dev processes
-subprocess.run(['pkill', '-f', 'vite'], capture_output=True)
-subprocess.run(['pkill', '-f', 'next'], capture_output=True)
-time.sleep(1)
-
-# Start dev server
-env = os.environ.copy()
-env['FORCE_COLOR'] = '0'
-env['CI'] = 'true'
-
-process = subprocess.Popen(
-    ['npm', 'run', 'dev'],
-    stdout=subprocess.PIPE,
-    stderr=subprocess.PIPE,
-    env=env
-)
-
-print(f'✓ Dev server started with PID: {process.pid}')
-print('Waiting for server to be ready...')
-    `);
-
-    // Wait for dev server to be ready
-    await new Promise(resolve => setTimeout(resolve, appConfig.e2b.viteStartupDelay));
+    // Wait for dev server to be ready (shorter delay when using custom template)
+    const startupDelay = this.usingCustomTemplate 
+      ? appConfig.e2b.viteStartupDelayWithTemplate 
+      : appConfig.e2b.viteStartupDelay;
+    
+    console.log(`[E2BProvider] Waiting ${startupDelay}ms for dev server...`);
+    await new Promise(resolve => setTimeout(resolve, startupDelay));
     
     console.log('[E2BProvider] Template setup complete');
+  }
+
+  /**
+   * Quick start for custom template - just start the dev server
+   * Use this when sandbox was created from custom template and you don't need to write files
+   */
+  async startDevServer(): Promise<void> {
+    if (!this.sandbox) {
+      throw new Error('No active sandbox');
+    }
+
+    console.log('[E2BProvider] Starting dev server (quick start)...');
+    
+    // Kill any existing dev processes first
+    try {
+      await this.sandbox.commands.run('pkill -f vite || true', { 
+        cwd: '/home/user/app',
+        timeoutMs: 5000 
+      });
+    } catch (e) {
+      // Ignore errors - process might not exist
+    }
+    
+    // Start dev server in background using commands.run
+    await this.sandbox.commands.run('npm run dev', {
+      cwd: '/home/user/app',
+      background: true,
+      envs: {
+        FORCE_COLOR: '0',
+        CI: 'true'
+      }
+    });
+
+    console.log('[E2BProvider] Dev server started in background');
+
+    // Use reduced delay for custom template
+    const startupDelay = this.usingCustomTemplate 
+      ? appConfig.e2b.viteStartupDelayWithTemplate 
+      : appConfig.e2b.viteStartupDelay;
+    
+    await new Promise(resolve => setTimeout(resolve, startupDelay));
+    console.log('[E2BProvider] Dev server ready');
   }
 
   /**
@@ -397,34 +435,38 @@ export default defineConfig({
       throw new Error('No active sandbox');
     }
 
+    console.log('[E2BProvider] Restarting Vite server...');
     
-    await this.sandbox.runCode(`
-import subprocess
-import time
-import os
-
-os.chdir('/home/user/app')
-
-# Kill existing Vite process
-subprocess.run(['pkill', '-f', 'vite'], capture_output=True)
-time.sleep(2)
-
-# Start Vite dev server
-env = os.environ.copy()
-env['FORCE_COLOR'] = '0'
-
-process = subprocess.Popen(
-    ['npm', 'run', 'dev'],
-    stdout=subprocess.PIPE,
-    stderr=subprocess.PIPE,
-    env=env
-)
-
-print(f'✓ Vite restarted with PID: {process.pid}')
-    `);
+    // Kill existing Vite process
+    try {
+      await this.sandbox.commands.run('pkill -f vite || true', { 
+        cwd: '/home/user/app',
+        timeoutMs: 5000 
+      });
+    } catch {
+      // Ignore - process might not exist
+    }
     
-    // Wait for Vite to be ready
-    await new Promise(resolve => setTimeout(resolve, appConfig.e2b.viteStartupDelay));
+    // Wait a bit for process to fully terminate (reduced from 2000ms)
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    // Start Vite dev server in background
+    await this.sandbox.commands.run('npm run dev', {
+      cwd: '/home/user/app',
+      background: true,
+      envs: {
+        FORCE_COLOR: '0',
+        CI: 'true'
+      }
+    });
+    
+    console.log('[E2BProvider] Vite server restarted');
+    
+    // Wait for Vite to be ready - use shorter delay for custom template
+    const startupDelay = this.usingCustomTemplate 
+      ? appConfig.e2b.viteStartupDelayWithTemplate 
+      : appConfig.e2b.viteStartupDelay;
+    await new Promise(resolve => setTimeout(resolve, startupDelay));
   }
 
   getSandboxUrl(): string | null {
@@ -466,51 +508,11 @@ print(f'✓ Vite restarted with PID: {process.pid}')
 
     console.log('[E2BProvider] Creating PTY session...');
 
-    // Start a bash shell in the app directory using subprocess
-    const result = await this.sandbox.runCode(`
-import subprocess
-import os
-import pty
-import select
-import json
-import sys
-
-# Change to app directory
-os.chdir('/home/user/app')
-
-# Create a pseudo-terminal
-master_fd, slave_fd = pty.openpty()
-
-# Start bash in the slave end of the PTY
-process = subprocess.Popen(
-    ['bash'],
-    stdin=slave_fd,
-    stdout=slave_fd,
-    stderr=slave_fd,
-    start_new_session=True,
-    cwd='/home/user/app'
-)
-
-# Store the master fd and pid for later use
-print(json.dumps({
-    "pid": process.pid,
-    "master_fd": master_fd,
-    "slave_fd": slave_fd
-}))
-    `);
-
-    const output = result.logs.stdout.join('\n');
-    let ptyInfo;
-    try {
-      ptyInfo = JSON.parse(output.trim());
-    } catch (e) {
-      console.error('[E2BProvider] Failed to parse PTY info:', output);
-      throw new Error('Failed to create PTY session');
-    }
-
+    // Create a simple PTY session (compatible with Node.js templates)
+    // We use commands.run for actual command execution
     this.ptySession = {
       id: `pty-${Date.now()}`,
-      pid: ptyInfo.pid,
+      pid: Date.now(), // Virtual PID
       createdAt: new Date()
     };
 
@@ -520,6 +522,7 @@ print(json.dumps({
 
   /**
    * Send input to the PTY terminal
+   * For Node.js templates, this directly executes the command
    */
   async sendPtyInput(input: string): Promise<void> {
     if (!this.sandbox) {
@@ -530,50 +533,34 @@ print(json.dumps({
       throw new Error('No active PTY session');
     }
 
-    // Escape the input for Python string
-    const escapedInput = JSON.stringify(input);
+    // Execute the command using commands.run
+    const trimmedInput = input.trim();
+    if (!trimmedInput) return;
 
-    // Run the command and capture output
-    const result = await this.sandbox.runCode(`
-import subprocess
-import os
-import json
+    try {
+      const result = await this.sandbox.commands.run(trimmedInput, {
+        cwd: '/home/user/app',
+        timeoutMs: 60000,
+        envs: {
+          TERM: 'xterm-256color',
+          FORCE_COLOR: '1'
+        }
+      });
 
-os.chdir('/home/user/app')
+      // Store output in buffer for getPtyOutput
+      const output = result.stdout + (result.stderr ? `\n${result.stderr}` : '');
+      this.ptyOutputBuffer.push(output);
 
-# Run command in bash and capture output
-result = subprocess.run(
-    ['bash', '-c', ${escapedInput}],
-    capture_output=True,
-    text=True,
-    cwd='/home/user/app',
-    env={**os.environ, 'TERM': 'xterm-256color'}
-)
-
-output = {
-    "stdout": result.stdout,
-    "stderr": result.stderr,
-    "returncode": result.returncode
-}
-print("__PTY_OUTPUT__" + json.dumps(output))
-    `);
-
-    const rawOutput = result.logs.stdout.join('\n');
-    const match = rawOutput.match(/__PTY_OUTPUT__(.+)/);
-    
-    if (match) {
-      try {
-        const parsed = JSON.parse(match[1]);
-        const combinedOutput = parsed.stdout + parsed.stderr;
-        
-        // Store output and notify listeners
-        this.ptyOutputBuffer.push(combinedOutput);
-        this.ptyOutputListeners.forEach(listener => listener(combinedOutput));
-      } catch (e) {
-        console.error('[E2BProvider] Failed to parse PTY output:', e);
+      // Notify listeners
+      for (const listener of this.ptyOutputListeners) {
+        listener(output);
       }
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Command failed';
+      this.ptyOutputBuffer.push(`Error: ${errorMsg}`);
     }
   }
+
 
   /**
    * Execute a command in the sandbox and return output
@@ -585,51 +572,30 @@ print("__PTY_OUTPUT__" + json.dumps(output))
 
     console.log('[E2BProvider] Executing PTY command:', command);
 
-    const result = await this.sandbox.runCode(`
-import subprocess
-import os
-import json
-import base64
+    // Use commands.run instead of runCode (works with Node.js templates)
+    try {
+      const result = await this.sandbox.commands.run(command, {
+        cwd: '/home/user/app',
+        timeoutMs: 60000,
+        envs: {
+          TERM: 'xterm-256color',
+          FORCE_COLOR: '1'
+        }
+      });
 
-os.chdir('/home/user/app')
-
-# Run command in bash and capture output
-result = subprocess.run(
-    ['bash', '-c', ${JSON.stringify(command)}],
-    capture_output=True,
-    cwd='/home/user/app',
-    env={**os.environ, 'TERM': 'xterm-256color', 'FORCE_COLOR': '1'}
-)
-
-output = {
-    "stdout": base64.b64encode(result.stdout).decode('ascii'),
-    "stderr": base64.b64encode(result.stderr).decode('ascii'),
-    "returncode": result.returncode
-}
-print("__PTY_RESULT__" + json.dumps(output))
-    `);
-
-    const rawOutput = result.logs.stdout.join('\n');
-    const match = rawOutput.match(/__PTY_RESULT__(.+)/);
-    
-    if (match) {
-      try {
-        const parsed = JSON.parse(match[1]);
-        return {
-          stdout: Buffer.from(parsed.stdout, 'base64').toString('utf-8'),
-          stderr: Buffer.from(parsed.stderr, 'base64').toString('utf-8'),
-          exitCode: parsed.returncode
-        };
-      } catch (e) {
-        console.error('[E2BProvider] Failed to parse PTY result:', e);
-      }
+      return {
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.exitCode
+      };
+    } catch (error) {
+      console.error('[E2BProvider] PTY command error:', error);
+      return {
+        stdout: '',
+        stderr: error instanceof Error ? error.message : 'Unknown error',
+        exitCode: 1
+      };
     }
-
-    return {
-      stdout: rawOutput,
-      stderr: result.logs.stderr.join('\n'),
-      exitCode: result.error ? 1 : 0
-    };
   }
 
   /**
@@ -643,12 +609,10 @@ print("__PTY_RESULT__" + json.dumps(output))
     console.log('[E2BProvider] Killing PTY session:', this.ptySession.id);
 
     try {
-      await this.sandbox.runCode(`
-import subprocess
-subprocess.run(['pkill', '-P', '${this.ptySession.pid}'], capture_output=True)
-subprocess.run(['kill', '-9', '${this.ptySession.pid}'], capture_output=True)
-print('PTY killed')
-      `);
+      await this.sandbox.commands.run(`pkill -P ${this.ptySession.pid} || true; kill -9 ${this.ptySession.pid} || true`, {
+        cwd: '/home/user/app',
+        timeoutMs: 5000
+      });
     } catch (e) {
       console.error('[E2BProvider] Error killing PTY:', e);
     }

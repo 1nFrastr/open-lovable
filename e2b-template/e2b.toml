@@ -1,0 +1,16 @@
+# E2B Custom Sandbox Template Configuration
+# This template pre-installs React + Vite + TypeScript + Tailwind CSS dependencies
+# to eliminate npm install time on every sandbox creation.
+
+template_name = "open-lovable-react-vite"
+dockerfile = "e2b.Dockerfile"
+
+# Start command - runs when sandbox starts
+cmd = "/home/user/start.sh"
+
+# Compute resources
+cpu_count = 2
+memory_mb = 2048
+
+# Build timeout (5 minutes should be enough for npm install)
+# build_timeout_s = 300

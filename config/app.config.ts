@@ -30,6 +30,14 @@ export const appConfig = {
 
   // E2B Sandbox Configuration
   e2b: {
+    // Custom template ID (set after running: e2b template build)
+    // When set, sandbox will use pre-configured template with dependencies pre-installed
+    // This significantly reduces sandbox startup time (from ~60s to ~10s)
+    templateId: process.env.E2B_TEMPLATE_ID || null,
+    
+    // Template name for building (used by e2b template build command)
+    templateName: 'open-lovable-react-vite',
+    
     // Sandbox timeout in minutes
     timeoutMinutes: 30,
 
@@ -42,7 +50,11 @@ export const appConfig = {
     vitePort: 5173,
 
     // Time to wait for Vite dev server to be ready (in milliseconds)
+    // Reduced when using custom template (dependencies pre-installed)
     viteStartupDelay: 10000,
+    
+    // Reduced startup delay when using custom template
+    viteStartupDelayWithTemplate: 3000,
 
     // Working directory in sandbox
     workingDirectory: '/home/user/app',

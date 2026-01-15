@@ -31,7 +31,7 @@ EXISTING PROJECT STRUCTURE:
 - Styles: src/index.css (Tailwind CSS)
 - Config files: vite.config.ts, tsconfig.json, tailwind.config.js
 
-DO NOT MODIFY these config files unless explicitly requested:
+DO NOT MODIFY these files unless explicitly requested:
 - vite.config.ts
 - tsconfig.json
 - tsconfig.app.json
@@ -39,7 +39,8 @@ DO NOT MODIFY these config files unless explicitly requested:
 - tailwind.config.js
 - postcss.config.js
 - eslint.config.js
-- package.json (only modify to add dependencies)`,
+- package.json (only modify to add dependencies)
+- src/main.tsx (CRITICAL: contains CSS import that enables Tailwind - NEVER remove "import './index.css'")`,
   files: [
     {
       path: 'package.json',

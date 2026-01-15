@@ -9,6 +9,7 @@ import { getBundledTemplate, hasBundledTemplate } from '@/lib/templates';
 // Store active sandbox globally
 declare global {
   var activeSandboxProvider: any;
+  var activeSandbox: any; // Legacy compatibility
   var sandboxData: any;
   var existingFiles: Set<string>;
   var sandboxState: SandboxState;
@@ -68,6 +69,7 @@ export async function POST(request: NextRequest) {
         console.error('Failed to terminate legacy global sandbox:', e);
       }
       global.activeSandboxProvider = null;
+      global.activeSandbox = null;
     }
     
     // Clear existing files tracking
@@ -83,34 +85,50 @@ export async function POST(request: NextRequest) {
     
     // Get template configuration
     const template = getTemplateByName(templateName);
-    let templateSource: 'bundled' | 'github' | 'fallback' = 'fallback';
+    let templateSource: 'bundled' | 'github' | 'fallback' | 'e2b-template' = 'fallback';
     
-    // Priority 1: Use pre-bundled template (fastest, no network)
-    if (hasBundledTemplate(templateName)) {
-      const bundledTemplate = getBundledTemplate(templateName);
-      if (bundledTemplate) {
-        console.log(`[create-ai-sandbox-v2] Using bundled template: ${templateName}`);
-        await provider.setupFromTemplate(bundledTemplate.files);
-        templateSource = 'bundled';
-      }
-    }
+    // Check if using custom E2B template (dependencies pre-installed in the image)
+    // Cast to any to access E2B-specific methods
+    const providerAny = provider as any;
+    const isUsingE2BTemplate = typeof providerAny.isUsingCustomTemplate === 'function' 
+      ? providerAny.isUsingCustomTemplate() 
+      : false;
     
-    // Priority 2: Download from GitHub (if bundled not available)
-    if (templateSource === 'fallback' && template && template.githubRepo) {
-      console.log(`[create-ai-sandbox-v2] Downloading template from GitHub: ${template.githubRepo}`);
-      const templateFiles = await downloadTemplateFiles(template.githubRepo);
+    if (isUsingE2BTemplate) {
+      // Custom E2B template: dev server auto-starts via setStartCmd in template
+      // No file writing, npm install, or manual server start needed
+      console.log('[create-ai-sandbox-v2] Using custom E2B template (dev server auto-started)');
+      templateSource = 'e2b-template';
+    } else {
+      // No custom E2B template: use bundled/github templates or fallback
       
-      if (templateFiles && templateFiles.length > 0) {
-        console.log(`[create-ai-sandbox-v2] Downloaded ${templateFiles.length} files, setting up...`);
-        await provider.setupFromTemplate(templateFiles);
-        templateSource = 'github';
+      // Priority 1: Use pre-bundled template (fastest, no network)
+      if (hasBundledTemplate(templateName)) {
+        const bundledTemplate = getBundledTemplate(templateName);
+        if (bundledTemplate) {
+          console.log(`[create-ai-sandbox-v2] Using bundled template: ${templateName}`);
+          await provider.setupFromTemplate(bundledTemplate.files);
+          templateSource = 'bundled';
+        }
       }
-    }
-    
-    // Priority 3: Fallback to basic setup
-    if (templateSource === 'fallback') {
-      console.log('[create-ai-sandbox-v2] Using fallback setup...');
-      await provider.setupViteApp();
+      
+      // Priority 2: Download from GitHub (if bundled not available)
+      if (templateSource === 'fallback' && template && template.githubRepo) {
+        console.log(`[create-ai-sandbox-v2] Downloading template from GitHub: ${template.githubRepo}`);
+        const templateFiles = await downloadTemplateFiles(template.githubRepo);
+        
+        if (templateFiles && templateFiles.length > 0) {
+          console.log(`[create-ai-sandbox-v2] Downloaded ${templateFiles.length} files, setting up...`);
+          await provider.setupFromTemplate(templateFiles);
+          templateSource = 'github';
+        }
+      }
+      
+      // Priority 3: Fallback to basic setup
+      if (templateSource === 'fallback') {
+        console.log('[create-ai-sandbox-v2] Using fallback setup...');
+        await provider.setupViteApp();
+      }
     }
     
     // Register with sandbox manager
@@ -118,6 +136,7 @@ export async function POST(request: NextRequest) {
     
     // Also store in legacy global state for backward compatibility
     global.activeSandboxProvider = provider;
+    global.activeSandbox = provider; // For APIs that use activeSandbox
     global.sandboxData = {
       sandboxId: sandboxInfo.sandboxId,
       url: sandboxInfo.url
@@ -140,6 +159,7 @@ export async function POST(request: NextRequest) {
     console.log('[create-ai-sandbox-v2] Sandbox ready at:', sandboxInfo.url);
     
     const messages: Record<string, string> = {
+      'e2b-template': 'Sandbox created with custom E2B template (fast startup)',
       bundled: `Sandbox created with bundled ${template?.label || templateName} template`,
       github: `Sandbox created with ${template?.label || templateName} template from GitHub`,
       fallback: 'Sandbox created with basic setup'
@@ -152,6 +172,8 @@ export async function POST(request: NextRequest) {
       provider: sandboxInfo.provider,
       template: templateName,
       templateSource,
+      // When using custom E2B template, files are pre-installed, skip frontend template setup
+      skipTemplateSetup: templateSource === 'e2b-template',
       message: messages[templateSource]
     });
 
@@ -167,6 +189,7 @@ export async function POST(request: NextRequest) {
         console.error('Failed to terminate sandbox on error:', e);
       }
       global.activeSandboxProvider = null;
+      global.activeSandbox = null;
     }
     
     return NextResponse.json(

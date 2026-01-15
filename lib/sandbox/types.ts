@@ -55,6 +55,20 @@ export abstract class SandboxProvider {
   // Optional methods that providers can override
   
   /**
+   * Check if sandbox was created with a custom template (dependencies pre-installed)
+   */
+  isUsingCustomTemplate(): boolean {
+    return false;
+  }
+  
+  /**
+   * Start the dev server (for use with custom templates)
+   */
+  async startDevServer(): Promise<void> {
+    throw new Error('startDevServer not implemented for this provider');
+  }
+  
+  /**
    * Setup sandbox from template files (bolt.diy style)
    * This is the preferred method for initialization
    */

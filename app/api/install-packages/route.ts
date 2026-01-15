@@ -141,14 +141,10 @@ export async function POST(request: NextRequest) {
             alreadyInstalled: validPackages
           });
           
-          // Restart dev server
-          await sendProgress({ type: 'status', message: 'Restarting development server...' });
-          
-          await providerInstance.restartViteServer();
-          
+          // No need to restart - packages are already installed
           await sendProgress({ 
             type: 'complete', 
-            message: 'Dev server restarted!',
+            message: 'All packages already installed, no restart needed',
             installedPackages: []
           });
           
@@ -199,31 +195,24 @@ export async function POST(request: NextRequest) {
             message: `Successfully installed: ${packagesToInstall.join(', ')}`,
             installedPackages: packagesToInstall
           });
+          
+          // Note: Vite is auto-restarted by installPackages() when autoRestartVite is enabled
+          // No need for additional restart here
+          await sendProgress({ 
+            type: 'complete', 
+            message: 'Package installation complete!',
+            installedPackages: packagesToInstall
+          });
         } else {
           await sendProgress({ 
             type: 'error', 
             message: 'Package installation failed' 
           });
-        }
-        
-        // Restart development server
-        await sendProgress({ type: 'status', message: 'Restarting development server...' });
-        
-        try {
-          await providerInstance.restartViteServer();
-          
-          // Wait a bit for the server to start
-          await new Promise(resolve => setTimeout(resolve, 3000));
           
           await sendProgress({ 
             type: 'complete', 
-            message: 'Package installation complete and dev server restarted!',
-            installedPackages: packagesToInstall
-          });
-        } catch (error) {
-          await sendProgress({ 
-            type: 'error', 
-            message: `Failed to restart dev server: ${(error as Error).message}` 
+            message: 'Installation finished with errors',
+            installedPackages: []
           });
         }
         

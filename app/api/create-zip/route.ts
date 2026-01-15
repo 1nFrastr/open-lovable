@@ -69,11 +69,23 @@ export async function POST() {
     console.log('[create-zip] Creating project zip...');
     
     // Create zip file in sandbox using standard commands
-    // Note: zip command with -x patterns - wildcards are passed directly to zip, not shell-expanded
+    // First remove old zip if exists, then create new one excluding large directories
+    await runCommand(provider, legacySandbox, 'rm -f /tmp/project.zip');
+    
+    // Use find + zip to properly exclude node_modules and other large directories
+    // This is more reliable than zip -x patterns
     const zipResult = await runCommand(
       provider, 
       legacySandbox,
-      'zip -r /tmp/project.zip . -x node_modules/* .git/* .next/* dist/* build/* *.log'
+      'cd /home/user/app && find . -type f ' +
+      '-not -path "*/node_modules/*" ' +
+      '-not -path "*/.git/*" ' +
+      '-not -path "*/.next/*" ' +
+      '-not -path "*/dist/*" ' +
+      '-not -path "*/build/*" ' +
+      '-not -path "*/.cache/*" ' +
+      '-not -name "*.log" ' +
+      '| zip /tmp/project.zip -@'
     );
     
     if (zipResult.exitCode !== 0) {

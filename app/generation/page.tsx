@@ -41,7 +41,8 @@ interface SandboxData {
   sandboxId: string;
   url: string;
   template?: string;
-  templateSource?: 'bundled' | 'github' | 'fallback';
+  templateSource?: 'bundled' | 'github' | 'fallback' | 'e2b-template';
+  skipTemplateSetup?: boolean;
   [key: string]: any;
 }
 
@@ -219,13 +220,17 @@ function AISandboxPage() {
         const newSandboxData = await createSandbox(true, selectedTemplate !== 'blank' ? selectedTemplate : undefined);
         
         // Now handle template download and setup
-        // Skip if sandbox was already initialized with bundled template
-        if (selectedTemplate !== 'blank' && newSandboxData?.templateSource !== 'bundled') {
-          console.log('[handleHomeSubmit] Template not bundled, downloading from GitHub...');
+        // Skip if sandbox was already initialized with bundled template or custom E2B template
+        const shouldSkipTemplateSetup = newSandboxData?.skipTemplateSetup || 
+          newSandboxData?.templateSource === 'bundled' || 
+          newSandboxData?.templateSource === 'e2b-template';
+        
+        if (selectedTemplate !== 'blank' && !shouldSkipTemplateSetup) {
+          console.log('[handleHomeSubmit] Template not pre-installed, downloading from GitHub...');
           await handleTemplateSetup(selectedTemplate, projectTitle || 'New Project', projectPrompt, newSandboxData);
-        } else if (selectedTemplate !== 'blank' && newSandboxData?.templateSource === 'bundled') {
-          // Template was already set up via bundled template
-          console.log('[handleHomeSubmit] Using bundled template, skipping handleTemplateSetup');
+        } else if (selectedTemplate !== 'blank' && shouldSkipTemplateSetup) {
+          // Template was already set up via bundled template or E2B custom template
+          console.log('[handleHomeSubmit] Using pre-installed template, skipping handleTemplateSetup');
           addChatMessage(
             `🚀 Project "${projectTitle}" initialized with ${selectedTemplate} template!\n\n` +
             `The sandbox is ready. What would you like to build?`,
