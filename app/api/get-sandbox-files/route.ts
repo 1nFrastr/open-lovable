@@ -11,6 +11,9 @@ declare global {
 
 export async function GET() {
   try {
+    const MAX_FILE_SIZE_BYTES = 50 * 1024; // 50KB
+    const EXCLUDED_FILES = new Set(['package-lock.json']);
+
     // Support both legacy activeSandbox and new activeSandboxProvider
     const provider = global.activeSandboxProvider;
     const legacySandbox = global.activeSandbox;
@@ -26,21 +29,53 @@ export async function GET() {
     console.log('[get-sandbox-files] Fetching and analyzing file structure...');
     console.log('[get-sandbox-files] Using provider:', !!provider, 'Legacy sandbox:', !!legacySandbox);
     
-    let fileList: string[] = [];
+    // Track all files for structure (before size filtering)
+    let allFilePaths: string[] = [];
+    // Files that pass size filter for content reading
+    let pathsToRead: string[] = [];
     
-    // Use provider's listFiles method if available
-    if (provider) {
+    // Use provider's listFilesWithSize method if available (most efficient - single command)
+    if (provider && typeof (provider as any).listFilesWithSize === 'function') {
       try {
-        fileList = await provider.listFiles();
-        console.log('[get-sandbox-files] Provider returned', fileList.length, 'files');
+        const filesWithSize = await (provider as any).listFilesWithSize() as Array<{ path: string; size: number }>;
+        console.log('[get-sandbox-files] Provider returned', filesWithSize.length, 'files with size info');
+        
+        // Keep all paths for structure
+        allFilePaths = filesWithSize.map(f => f.path);
+        
+        // Filter by size and excluded files for reading
+        pathsToRead = filesWithSize
+          .filter(f => {
+            const fileName = f.path.split('/').pop() || '';
+            return f.size <= MAX_FILE_SIZE_BYTES && !EXCLUDED_FILES.has(fileName);
+          })
+          .map(f => f.path);
+        
+        console.log('[get-sandbox-files] Size filtered', pathsToRead.length, 'files under 50KB');
+      } catch (e) {
+        console.error('[get-sandbox-files] Provider listFilesWithSize failed:', e);
+        // Fall through to listFiles method
+      }
+    }
+    
+    // Fallback to listFiles without size info
+    if (allFilePaths.length === 0 && provider) {
+      try {
+        allFilePaths = await provider.listFiles();
+        console.log('[get-sandbox-files] Provider returned', allFilePaths.length, 'files (no size info)');
+        
+        // Without size info, read all files (size check will be skipped)
+        pathsToRead = allFilePaths.filter(f => {
+          const fileName = f.split('/').pop() || '';
+          return !EXCLUDED_FILES.has(fileName);
+        });
       } catch (e) {
         console.error('[get-sandbox-files] Provider listFiles failed:', e);
-        // Fall through to legacy method
       }
     }
     
     // Fallback to legacy method
-    if (fileList.length === 0 && legacySandbox) {
+    if (allFilePaths.length === 0 && legacySandbox) {
       const findResult = await legacySandbox.runCommand({
         cmd: 'find',
         args: [
@@ -66,26 +101,27 @@ export async function GET() {
         throw new Error('Failed to list files');
       }
       
-      fileList = (await findResult.stdout()).split('\n').filter((f: string) => f.trim());
+      allFilePaths = (await findResult.stdout()).split('\n')
+        .filter((f: string) => f.trim())
+        .map((f: string) => f.replace(/^\.\//, ''));
+      
+      pathsToRead = allFilePaths.filter(f => {
+        const fileName = f.split('/').pop() || '';
+        return !EXCLUDED_FILES.has(fileName);
+      });
     }
     
     // Filter to only relevant file types
-    fileList = fileList.filter((f: string) => {
+    allFilePaths = allFilePaths.filter((f: string) => {
+      const ext = f.split('.').pop()?.toLowerCase();
+      return ['jsx', 'js', 'tsx', 'ts', 'css', 'json', 'html'].includes(ext || '');
+    });
+    pathsToRead = pathsToRead.filter((f: string) => {
       const ext = f.split('.').pop()?.toLowerCase();
       return ['jsx', 'js', 'tsx', 'ts', 'css', 'json', 'html'].includes(ext || '');
     });
     
-    console.log('[get-sandbox-files] Found', fileList.length, 'files after filtering');
-    
-    // Prepare file paths for reading (filter out unwanted paths)
-    const pathsToRead: string[] = [];
-    for (const filePath of fileList) {
-      const relativePath = filePath.replace(/^\.\//, '');
-      // Skip node_modules and other unwanted paths
-      if (!relativePath.includes('node_modules') && !relativePath.includes('.git')) {
-        pathsToRead.push(relativePath);
-      }
-    }
+    console.log('[get-sandbox-files] Found', allFilePaths.length, 'total files,', pathsToRead.length, 'to read');
     
     // Read content of files in parallel (much faster than sequential)
     let filesContent: Record<string, string> = {};
@@ -113,7 +149,7 @@ export async function GET() {
         }
       }
     } else if (legacySandbox) {
-      // Legacy method: sequential reads (cannot parallelize easily)
+      // Legacy method: sequential reads with size check
       for (const filePath of pathsToRead) {
         try {
           const statResult = await legacySandbox.runCommand({
@@ -124,8 +160,8 @@ export async function GET() {
           if (statResult.exitCode === 0) {
             const fileSize = parseInt(await statResult.stdout());
             
-            // Only read files smaller than 10KB
-            if (fileSize < 10000) {
+            // Only read files smaller than limit
+            if (fileSize <= MAX_FILE_SIZE_BYTES) {
               const catResult = await legacySandbox.runCommand({
                 cmd: 'cat',
                 args: [filePath]
@@ -147,9 +183,9 @@ export async function GET() {
     let structure = '';
     
     if (provider) {
-      // Build structure from file list
+      // Build structure from file list (use allFilePaths to include large files in structure)
       const dirs = new Set<string>();
-      for (const file of fileList) {
+      for (const file of allFilePaths) {
         const parts = file.split('/');
         let path = '';
         for (let i = 0; i < parts.length - 1; i++) {

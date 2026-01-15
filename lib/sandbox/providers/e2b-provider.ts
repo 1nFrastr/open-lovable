@@ -380,6 +380,47 @@ export class E2BProvider extends SandboxProvider {
     }
   }
 
+  /**
+   * List files with their sizes in a single command (much faster than individual stat calls)
+   * Uses find -printf to get both path and size at once
+   */
+  async listFilesWithSize(directory: string = '/home/user/app'): Promise<Array<{ path: string; size: number }>> {
+    if (!this.sandbox) {
+      throw new Error('No active sandbox');
+    }
+
+    try {
+      // Use find -printf to get size and path in one command
+      // Format: "size path" per line (e.g., "1234 /home/user/app/src/App.tsx")
+      const result = await this.sandbox.commands.run(
+        `find ${directory} -type f \\( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" -o -name "*.json" -o -name "*.css" -o -name "*.html" -o -name "*.md" \\) ! -path "*/node_modules/*" ! -path "*/.git/*" ! -path "*/.next/*" ! -path "*/dist/*" ! -path "*/build/*" -printf '%s %p\\n' 2>/dev/null | sort -t' ' -k2`,
+        { cwd: directory, timeoutMs: 30000 }
+      );
+      
+      const files = result.stdout
+        .split('\n')
+        .filter((line: string) => line.trim())
+        .map((line: string) => {
+          const spaceIndex = line.indexOf(' ');
+          if (spaceIndex === -1) {
+            return { path: line.replace(`${directory}/`, ''), size: 0 };
+          }
+          const size = parseInt(line.substring(0, spaceIndex), 10) || 0;
+          const fullPath = line.substring(spaceIndex + 1);
+          return {
+            path: fullPath.replace(`${directory}/`, ''),
+            size
+          };
+        });
+      
+      console.log(`[E2BProvider] listFilesWithSize found ${files.length} files`);
+      return files;
+    } catch (error) {
+      console.error('[E2BProvider] listFilesWithSize error:', error);
+      return [];
+    }
+  }
+
   async installPackages(packages: string[]): Promise<CommandResult> {
     if (!this.sandbox) {
       throw new Error('No active sandbox');

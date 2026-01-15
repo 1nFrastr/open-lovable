@@ -4,6 +4,11 @@ export interface SandboxFile {
   lastModified?: number;
 }
 
+export interface FileWithSize {
+  path: string;
+  size: number;
+}
+
 export interface SandboxInfo {
   sandboxId: string;
   url: string;
@@ -87,5 +92,15 @@ export abstract class SandboxProvider {
   async restartViteServer(): Promise<void> {
     // Default implementation for restarting Vite
     throw new Error('restartViteServer not implemented for this provider');
+  }
+  
+  /**
+   * List files with their sizes (more efficient than listFiles + individual stat calls)
+   * Returns files with path and size in bytes
+   */
+  async listFilesWithSize(directory?: string): Promise<FileWithSize[]> {
+    // Default: fall back to listFiles without size info
+    const files = await this.listFiles(directory);
+    return files.map(path => ({ path, size: 0 }));
   }
 }
