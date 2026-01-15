@@ -588,84 +588,141 @@ export async function POST(request: NextRequest) {
           });
         }
         
-        for (const [index, file] of filteredFiles.entries()) {
-          try {
-            // Send progress for each file
-            await sendProgress({
-              type: 'file-progress',
-              current: index + 1,
-              total: filteredFiles.length,
-              fileName: file.path,
-              action: 'creating'
-            });
+        // Prepare files for parallel writing
+        const filesToWrite: Array<{ path: string; content: string; originalPath: string }> = [];
+        
+        for (const file of filteredFiles) {
+          // Normalize the file path
+          let normalizedPath = file.path;
+          if (normalizedPath.startsWith('/')) {
+            normalizedPath = normalizedPath.substring(1);
+          }
+          if (!normalizedPath.startsWith('src/') &&
+            !normalizedPath.startsWith('public/') &&
+            normalizedPath !== 'index.html' &&
+            !configFiles.includes(normalizedPath.split('/').pop() || '')) {
+            normalizedPath = 'src/' + normalizedPath;
+          }
 
-            // Normalize the file path
-            let normalizedPath = file.path;
-            if (normalizedPath.startsWith('/')) {
-              normalizedPath = normalizedPath.substring(1);
-            }
-            if (!normalizedPath.startsWith('src/') &&
-              !normalizedPath.startsWith('public/') &&
-              normalizedPath !== 'index.html' &&
-              !configFiles.includes(normalizedPath.split('/').pop() || '')) {
-              normalizedPath = 'src/' + normalizedPath;
-            }
+          // Remove any CSS imports from JSX/JS files (we're using Tailwind)
+          let fileContent = file.content;
+          if (file.path.endsWith('.jsx') || file.path.endsWith('.js') || file.path.endsWith('.tsx') || file.path.endsWith('.ts')) {
+            fileContent = fileContent.replace(/import\s+['"]\.\/[^'"]+\.css['"];?\s*\n?/g, '');
+          }
 
-            const isUpdate = global.existingFiles.has(normalizedPath);
+          // Fix common Tailwind CSS errors in CSS files
+          if (file.path.endsWith('.css')) {
+            fileContent = fileContent.replace(/shadow-3xl/g, 'shadow-2xl');
+            fileContent = fileContent.replace(/shadow-4xl/g, 'shadow-2xl');
+            fileContent = fileContent.replace(/shadow-5xl/g, 'shadow-2xl');
+          }
 
-            // Remove any CSS imports from JSX/JS files (we're using Tailwind)
-            let fileContent = file.content;
-            if (file.path.endsWith('.jsx') || file.path.endsWith('.js') || file.path.endsWith('.tsx') || file.path.endsWith('.ts')) {
-              fileContent = fileContent.replace(/import\s+['"]\.\/[^'"]+\.css['"];?\s*\n?/g, '');
-            }
+          filesToWrite.push({ path: normalizedPath, content: fileContent, originalPath: file.path });
+        }
 
-            // Fix common Tailwind CSS errors in CSS files
-            if (file.path.endsWith('.css')) {
-              // Replace shadow-3xl with shadow-2xl (shadow-3xl doesn't exist)
-              fileContent = fileContent.replace(/shadow-3xl/g, 'shadow-2xl');
-              // Replace any other non-existent shadow utilities
-              fileContent = fileContent.replace(/shadow-4xl/g, 'shadow-2xl');
-              fileContent = fileContent.replace(/shadow-5xl/g, 'shadow-2xl');
-            }
+        // Use parallel write if available, otherwise fall back to sequential
+        if (filesToWrite.length > 0 && typeof (providerInstance as any).writeFilesParallel === 'function') {
+          // Optimized parallel write
+          await sendProgress({
+            type: 'file-progress',
+            current: 0,
+            total: filesToWrite.length,
+            fileName: 'Writing files in parallel...',
+            action: 'creating'
+          });
 
-            // Create directory if needed
-            const dirPath = normalizedPath.includes('/') ? normalizedPath.substring(0, normalizedPath.lastIndexOf('/')) : '';
-            if (dirPath) {
-              await providerInstance.runCommand(`mkdir -p ${dirPath}`);
-            }
+          const { written, errors: writeErrors } = await (providerInstance as any).writeFilesParallel(
+            filesToWrite.map(f => ({ path: f.path, content: f.content }))
+          );
 
-            // Write the file using provider
-            await providerInstance.writeFile(normalizedPath, fileContent);
-
+          // Update results and cache for written files
+          for (const path of written) {
+            const fileData = filesToWrite.find(f => f.path === path);
+            const isUpdate = global.existingFiles.has(path);
+            
             // Update file cache
-            if (global.sandboxState?.fileCache) {
-              global.sandboxState.fileCache.files[normalizedPath] = {
-                content: fileContent,
+            if (global.sandboxState?.fileCache && fileData) {
+              global.sandboxState.fileCache.files[path] = {
+                content: fileData.content,
                 lastModified: Date.now()
               };
             }
 
             if (isUpdate) {
-              if (results.filesUpdated) results.filesUpdated.push(normalizedPath);
+              if (results.filesUpdated) results.filesUpdated.push(path);
             } else {
-              if (results.filesCreated) results.filesCreated.push(normalizedPath);
-              if (global.existingFiles) global.existingFiles.add(normalizedPath);
+              if (results.filesCreated) results.filesCreated.push(path);
+              if (global.existingFiles) global.existingFiles.add(path);
             }
+          }
 
-            await sendProgress({
-              type: 'file-complete',
-              fileName: normalizedPath,
-              action: isUpdate ? 'updated' : 'created'
-            });
-          } catch (error) {
-            if (results.errors) {
-              results.errors.push(`Failed to create ${file.path}: ${(error as Error).message}`);
+          // Report errors
+          for (const err of writeErrors) {
+            if (results.errors) results.errors.push(err);
+          }
+
+          // Give Vite time to detect file changes via HMR
+          // This is needed because parallel writes are fast and Vite's file watchers need time to catch up
+          await new Promise(resolve => setTimeout(resolve, 500));
+
+          await sendProgress({
+            type: 'file-complete',
+            fileName: `${written.length} files`,
+            action: 'created'
+          });
+        } else {
+          // Fallback to sequential write
+          for (const [index, fileData] of filesToWrite.entries()) {
+            try {
+              await sendProgress({
+                type: 'file-progress',
+                current: index + 1,
+                total: filesToWrite.length,
+                fileName: fileData.path,
+                action: 'creating'
+              });
+
+              const isUpdate = global.existingFiles.has(fileData.path);
+
+              // Create directory if needed
+              const dirPath = fileData.path.includes('/') ? fileData.path.substring(0, fileData.path.lastIndexOf('/')) : '';
+              if (dirPath) {
+                await providerInstance.runCommand(`mkdir -p ${dirPath}`);
+              }
+
+              // Write the file using provider
+              await providerInstance.writeFile(fileData.path, fileData.content);
+
+              // Update file cache
+              if (global.sandboxState?.fileCache) {
+                global.sandboxState.fileCache.files[fileData.path] = {
+                  content: fileData.content,
+                  lastModified: Date.now()
+                };
+              }
+
+              if (isUpdate) {
+                if (results.filesUpdated) results.filesUpdated.push(fileData.path);
+              } else {
+                if (results.filesCreated) results.filesCreated.push(fileData.path);
+                if (global.existingFiles) global.existingFiles.add(fileData.path);
+              }
+
+              await sendProgress({
+                type: 'file-complete',
+                fileName: fileData.path,
+                action: isUpdate ? 'updated' : 'created'
+              });
+            } catch (error) {
+              if (results.errors) {
+                results.errors.push(`Failed to create ${fileData.originalPath}: ${(error as Error).message}`);
+              }
+              await sendProgress({
+                type: 'file-error',
+                fileName: fileData.originalPath,
+                error: (error as Error).message
+              });
             }
-            await sendProgress({
-              type: 'file-error',
-              fileName: file.path,
-              error: (error as Error).message
-            });
           }
         }
 

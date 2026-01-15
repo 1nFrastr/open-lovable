@@ -1173,44 +1173,96 @@ Tip: I automatically detect and install npm packages from your code imports (lik
             addChatMessage(`⚠️ Some packages failed to install. Check the error banner above for details.`, 'system');
           }
           
-          // Force sync files from container after apply (always update, don't skip)
-          console.log('[applyGeneratedCode] Force syncing files from container...');
-          try {
-            const response = await fetch('/api/get-sandbox-files');
-            const data = await response.json();
-            if (data.success && data.files) {
-              const files = data.files;
-              console.log('[applyGeneratedCode] Fetched', Object.keys(files).length, 'files from container');
+          // Use local cache instead of full container sync (optimization)
+          // Parse file content directly from the AI response (code parameter)
+          // This ensures we have the actual content that was written to the container
+          console.log('[applyGeneratedCode] Using local cache for file sync (skipping full container fetch)');
+          
+          const allAffectedFiles = [...(results.filesCreated || []), ...(results.filesUpdated || [])];
+          
+          if (allAffectedFiles.length > 0) {
+            // Parse files directly from the AI response to get accurate content
+            const parsedFiles: Record<string, string> = {};
+            const fileRegex = /<file path="([^"]+)">([\s\S]*?)<\/file>/g;
+            let match;
+            while ((match = fileRegex.exec(code)) !== null) {
+              let filePath = match[1];
+              let fileContent = match[2].trim();
               
-              // Update sandboxFiles state
-              setSandboxFiles(files);
+              // Apply the same path normalization as the backend
+              if (filePath.startsWith('/')) {
+                filePath = filePath.substring(1);
+              }
+              const configFiles = ['tailwind.config.js', 'vite.config.js', 'package.json', 'package-lock.json', 'tsconfig.json', 'postcss.config.js'];
+              if (!filePath.startsWith('src/') &&
+                  !filePath.startsWith('public/') &&
+                  filePath !== 'index.html' &&
+                  !configFiles.includes(filePath.split('/').pop() || '')) {
+                filePath = 'src/' + filePath;
+              }
               
-              // Force update generationProgress.files with fresh content from container
-              const progressFiles = Object.entries(files).map(([path, content]) => {
-                const ext = path.split('.').pop()?.toLowerCase() || '';
-                let type = 'utility';
-                if (['tsx', 'jsx'].includes(ext)) type = 'component';
-                else if (ext === 'css') type = 'style';
-                else if (ext === 'json') type = 'config';
-                
-                return {
-                  path,
-                  content: content as string,
-                  type,
-                  completed: true
-                };
-              });
+              // Apply the same content transformations as the backend
+              if (filePath.endsWith('.jsx') || filePath.endsWith('.js') || filePath.endsWith('.tsx') || filePath.endsWith('.ts')) {
+                fileContent = fileContent.replace(/import\s+['"]\.\/[^'"]+\.css['"];?\s*\n?/g, '');
+              }
+              if (filePath.endsWith('.css')) {
+                fileContent = fileContent.replace(/shadow-3xl/g, 'shadow-2xl');
+                fileContent = fileContent.replace(/shadow-4xl/g, 'shadow-2xl');
+                fileContent = fileContent.replace(/shadow-5xl/g, 'shadow-2xl');
+              }
               
-              setGenerationProgress(prev => ({
-                ...prev,
-                files: progressFiles,
-                status: 'Files synced from container'
-              }));
-              
-              console.log('[applyGeneratedCode] Updated generationProgress.files with', progressFiles.length, 'files');
+              parsedFiles[filePath] = fileContent;
             }
-          } catch (error) {
-            console.error('[applyGeneratedCode] Error syncing files:', error);
+            
+            // Update sandboxFiles with parsed content
+            const updatedSandboxFiles: Record<string, string> = { ...sandboxFiles };
+            for (const [path, content] of Object.entries(parsedFiles)) {
+              updatedSandboxFiles[path] = content;
+            }
+            
+            setSandboxFiles(updatedSandboxFiles);
+            console.log('[applyGeneratedCode] Updated sandboxFiles from parsed AI response:', Object.keys(parsedFiles).length, 'new files,', Object.keys(updatedSandboxFiles).length, 'total files');
+            
+            // Update generationProgress.files with the correct paths and content
+            const progressFiles = Object.entries(updatedSandboxFiles).map(([path, content]) => {
+              const ext = path.split('.').pop()?.toLowerCase() || '';
+              let type = 'utility';
+              if (['tsx', 'jsx'].includes(ext)) type = 'component';
+              else if (ext === 'css') type = 'style';
+              else if (ext === 'json') type = 'config';
+              
+              return { path, content, type, completed: true };
+            });
+            
+            setGenerationProgress(prev => ({
+              ...prev,
+              files: progressFiles,
+              status: 'Files applied from local cache'
+            }));
+          } else {
+            // Fallback: if no files affected, do a quick container sync
+            console.log('[applyGeneratedCode] No files affected, falling back to container sync...');
+            try {
+              const response = await fetch('/api/get-sandbox-files');
+              const data = await response.json();
+              if (data.success && data.files) {
+                setSandboxFiles(data.files);
+                
+                const progressFiles = Object.entries(data.files).map(([path, content]) => {
+                  const ext = path.split('.').pop()?.toLowerCase() || '';
+                  let type = 'utility';
+                  if (['tsx', 'jsx'].includes(ext)) type = 'component';
+                  else if (ext === 'css') type = 'style';
+                  else if (ext === 'json') type = 'config';
+                  
+                  return { path, content: content as string, type, completed: true };
+                });
+                
+                setGenerationProgress(prev => ({ ...prev, files: progressFiles, status: 'Files synced from container' }));
+              }
+            } catch (error) {
+              console.error('[applyGeneratedCode] Error syncing files:', error);
+            }
           }
           
           // Skip automatic package check - it's not needed here and can cause false "no sandbox" messages

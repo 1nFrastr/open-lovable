@@ -77,31 +77,45 @@ export async function GET() {
     
     console.log('[get-sandbox-files] Found', fileList.length, 'files after filtering');
     
-    // Read content of each file (limit to reasonable sizes)
-    const filesContent: Record<string, string> = {};
-    
+    // Prepare file paths for reading (filter out unwanted paths)
+    const pathsToRead: string[] = [];
     for (const filePath of fileList) {
-      try {
-        // Remove leading './' from path
-        const relativePath = filePath.replace(/^\.\//, '');
-        
-        // Skip node_modules and other unwanted paths
-        if (relativePath.includes('node_modules') || relativePath.includes('.git')) {
-          continue;
+      const relativePath = filePath.replace(/^\.\//, '');
+      // Skip node_modules and other unwanted paths
+      if (!relativePath.includes('node_modules') && !relativePath.includes('.git')) {
+        pathsToRead.push(relativePath);
+      }
+    }
+    
+    // Read content of files in parallel (much faster than sequential)
+    let filesContent: Record<string, string> = {};
+    
+    if (provider && typeof (provider as any).readFilesParallel === 'function') {
+      // Use optimized parallel read method
+      console.log('[get-sandbox-files] Using parallel file read for', pathsToRead.length, 'files');
+      filesContent = await (provider as any).readFilesParallel(pathsToRead);
+    } else if (provider) {
+      // Fallback to parallel Promise.all with individual reads
+      console.log('[get-sandbox-files] Using Promise.all fallback for', pathsToRead.length, 'files');
+      const readPromises = pathsToRead.map(async (relativePath) => {
+        try {
+          const content = await provider.readFile(relativePath);
+          return { path: relativePath, content };
+        } catch {
+          return { path: relativePath, content: null };
         }
-        
-        let content: string | null = null;
-        
-        // Use provider's readFile method if available
-        if (provider) {
-          try {
-            content = await provider.readFile(relativePath);
-          } catch (e) {
-            // File might not exist or be unreadable
-            continue;
-          }
-        } else if (legacySandbox) {
-          // Legacy method: check file size first
+      });
+      
+      const results = await Promise.all(readPromises);
+      for (const result of results) {
+        if (result.content !== null) {
+          filesContent[result.path] = result.content;
+        }
+      }
+    } else if (legacySandbox) {
+      // Legacy method: sequential reads (cannot parallelize easily)
+      for (const filePath of pathsToRead) {
+        try {
           const statResult = await legacySandbox.runCommand({
             cmd: 'stat',
             args: ['-f', '%z', filePath]
@@ -118,19 +132,14 @@ export async function GET() {
               });
               
               if (catResult.exitCode === 0) {
-                content = await catResult.stdout();
+                filesContent[filePath] = await catResult.stdout();
               }
             }
           }
+        } catch (parseError) {
+          console.debug('Error reading file:', filePath, parseError);
+          continue;
         }
-        
-        if (content !== null) {
-          filesContent[relativePath] = content;
-        }
-      } catch (parseError) {
-        console.debug('Error reading file:', filePath, parseError);
-        // Skip files that can't be read
-        continue;
       }
     }
     

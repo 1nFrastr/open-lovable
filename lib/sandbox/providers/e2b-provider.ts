@@ -190,6 +190,171 @@ export class E2BProvider extends SandboxProvider {
     return content;
   }
 
+  /**
+   * Write multiple files in parallel with batch directory creation
+   * This is significantly faster than writing files one by one
+   */
+  async writeFilesParallel(files: Array<{ path: string; content: string }>): Promise<{ written: string[]; errors: string[] }> {
+    if (!this.sandbox) {
+      throw new Error('No active sandbox');
+    }
+
+    const written: string[] = [];
+    const errors: string[] = [];
+
+    if (files.length === 0) {
+      return { written, errors };
+    }
+
+    console.log(`[E2BProvider] Writing ${files.length} files in parallel...`);
+    const startTime = Date.now();
+
+    // 1. Collect all unique directories that need to be created
+    const dirs = new Set<string>();
+    for (const file of files) {
+      const fullPath = file.path.startsWith('/') ? file.path : `/home/user/app/${file.path}`;
+      const dirPath = fullPath.substring(0, fullPath.lastIndexOf('/'));
+      if (dirPath && dirPath !== '/home/user/app') {
+        dirs.add(dirPath);
+      }
+    }
+
+    // 2. Create all directories in a single command (batch mkdir)
+    if (dirs.size > 0) {
+      try {
+        const dirList = [...dirs].map(d => `"${d}"`).join(' ');
+        await this.sandbox.commands.run(`mkdir -p ${dirList}`, {
+          cwd: '/home/user/app',
+          timeoutMs: 10000
+        });
+        console.log(`[E2BProvider] Created ${dirs.size} directories in batch`);
+      } catch (error) {
+        console.warn('[E2BProvider] Batch mkdir warning (directories may already exist):', error);
+      }
+    }
+
+    // 3. Write all files in parallel using Promise.allSettled
+    const writePromises = files.map(async (file) => {
+      const fullPath = file.path.startsWith('/') ? file.path : `/home/user/app/${file.path}`;
+      try {
+        await this.sandbox!.files.write(fullPath, file.content);
+        this.existingFiles.add(file.path);
+        return { success: true, path: file.path };
+      } catch (error) {
+        return { success: false, path: file.path, error: (error as Error).message };
+      }
+    });
+
+    const results = await Promise.allSettled(writePromises);
+    
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
+        if (result.value.success) {
+          written.push(result.value.path);
+        } else {
+          errors.push(`${result.value.path}: ${result.value.error}`);
+        }
+      } else {
+        errors.push(`Unknown error: ${result.reason}`);
+      }
+    }
+
+    const duration = Date.now() - startTime;
+    console.log(`[E2BProvider] Parallel write complete: ${written.length} files in ${duration}ms`);
+    
+    if (errors.length > 0) {
+      console.warn(`[E2BProvider] Write errors:`, errors);
+    }
+
+    return { written, errors };
+  }
+
+  /**
+   * Read multiple files in parallel
+   * This is significantly faster than reading files one by one
+   */
+  async readFilesParallel(paths: string[]): Promise<Record<string, string>> {
+    if (!this.sandbox) {
+      throw new Error('No active sandbox');
+    }
+
+    if (paths.length === 0) {
+      return {};
+    }
+
+    console.log(`[E2BProvider] Reading ${paths.length} files in parallel...`);
+    const startTime = Date.now();
+
+    const results: Record<string, string> = {};
+    
+    // Read all files in parallel using Promise.allSettled
+    const readPromises = paths.map(async (path) => {
+      const fullPath = path.startsWith('/') ? path : `/home/user/app/${path}`;
+      try {
+        const content = await this.sandbox!.files.read(fullPath);
+        return { success: true, path, content };
+      } catch {
+        return { success: false, path, content: null };
+      }
+    });
+
+    const settled = await Promise.allSettled(readPromises);
+    
+    let successCount = 0;
+    for (const result of settled) {
+      if (result.status === 'fulfilled' && result.value.success && result.value.content !== null) {
+        results[result.value.path] = result.value.content;
+        successCount++;
+      }
+    }
+
+    const duration = Date.now() - startTime;
+    console.log(`[E2BProvider] Parallel read complete: ${successCount}/${paths.length} files in ${duration}ms`);
+
+    return results;
+  }
+
+  /**
+   * Wait for Vite dev server to be ready using health check polling
+   * This replaces fixed delays with actual readiness detection
+   */
+  async waitForViteReady(maxWait: number = 10000): Promise<boolean> {
+    if (!this.sandbox) {
+      return false;
+    }
+
+    const startTime = Date.now();
+    const pollInterval = 300; // Check every 300ms
+    let attempts = 0;
+
+    console.log(`[E2BProvider] Waiting for Vite to be ready (max ${maxWait}ms)...`);
+
+    while (Date.now() - startTime < maxWait) {
+      attempts++;
+      try {
+        // Try to curl the Vite dev server
+        const result = await this.sandbox.commands.run(
+          'curl -s -o /dev/null -w "%{http_code}" http://localhost:5173 2>/dev/null || echo "000"',
+          { cwd: '/home/user/app', timeoutMs: 2000 }
+        );
+        
+        const statusCode = result.stdout.trim();
+        if (statusCode === '200' || statusCode === '304') {
+          const duration = Date.now() - startTime;
+          console.log(`[E2BProvider] Vite ready after ${duration}ms (${attempts} attempts)`);
+          return true;
+        }
+      } catch {
+        // Ignore errors, keep polling
+      }
+      
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+    }
+
+    console.warn(`[E2BProvider] Vite not ready after ${maxWait}ms, proceeding anyway`);
+    return false;
+  }
+
   async listFiles(directory: string = '/home/user/app'): Promise<string[]> {
     if (!this.sandbox) {
       throw new Error('No active sandbox');
@@ -263,7 +428,7 @@ export class E2BProvider extends SandboxProvider {
    * When using a custom E2B template (with pre-installed dependencies):
    * - Skips npm install (dependencies already in the image)
    * - Only starts the dev server
-   * - Uses reduced startup delay
+   * - Uses health check polling instead of fixed delay
    */
   async setupFromTemplate(files: Array<{ path: string; content: string }>): Promise<void> {
     if (!this.sandbox) {
@@ -273,13 +438,9 @@ export class E2BProvider extends SandboxProvider {
     console.log(`[E2BProvider] Setting up from template with ${files.length} files...`);
     console.log(`[E2BProvider] Using custom template: ${this.usingCustomTemplate}`);
 
-    // Write all template files to sandbox
-    for (const file of files) {
-      await this.writeFile(file.path, file.content);
-      this.existingFiles.add(file.path);
-    }
-
-    console.log('[E2BProvider] All template files written');
+    // Write all template files to sandbox in parallel (optimized)
+    const { written, errors } = await this.writeFilesParallel(files);
+    console.log(`[E2BProvider] Template files written: ${written.length} success, ${errors.length} errors`);
 
     // Skip npm install if using custom template (dependencies pre-installed)
     if (!this.usingCustomTemplate) {
@@ -327,13 +488,12 @@ export class E2BProvider extends SandboxProvider {
     
     console.log('[E2BProvider] Dev server started in background');
 
-    // Wait for dev server to be ready (shorter delay when using custom template)
-    const startupDelay = this.usingCustomTemplate 
+    // Use health check polling instead of fixed delay
+    const maxWait = this.usingCustomTemplate 
       ? appConfig.e2b.viteStartupDelayWithTemplate 
       : appConfig.e2b.viteStartupDelay;
     
-    console.log(`[E2BProvider] Waiting ${startupDelay}ms for dev server...`);
-    await new Promise(resolve => setTimeout(resolve, startupDelay));
+    await this.waitForViteReady(maxWait);
     
     console.log('[E2BProvider] Template setup complete');
   }
@@ -371,12 +531,12 @@ export class E2BProvider extends SandboxProvider {
 
     console.log('[E2BProvider] Dev server started in background');
 
-    // Use reduced delay for custom template
-    const startupDelay = this.usingCustomTemplate 
+    // Use health check polling instead of fixed delay
+    const maxWait = this.usingCustomTemplate 
       ? appConfig.e2b.viteStartupDelayWithTemplate 
       : appConfig.e2b.viteStartupDelay;
     
-    await new Promise(resolve => setTimeout(resolve, startupDelay));
+    await this.waitForViteReady(maxWait);
     console.log('[E2BProvider] Dev server ready');
   }
 
@@ -447,8 +607,8 @@ export default defineConfig({
       // Ignore - process might not exist
     }
     
-    // Wait a bit for process to fully terminate (reduced from 2000ms)
-    await new Promise(resolve => setTimeout(resolve, 500));
+    // Wait a bit for process to fully terminate (reduced from 500ms to 200ms)
+    await new Promise(resolve => setTimeout(resolve, 200));
     
     // Start Vite dev server in background
     await this.sandbox.commands.run('npm run dev', {
@@ -462,11 +622,11 @@ export default defineConfig({
     
     console.log('[E2BProvider] Vite server restarted');
     
-    // Wait for Vite to be ready - use shorter delay for custom template
-    const startupDelay = this.usingCustomTemplate 
+    // Use health check polling instead of fixed delay
+    const maxWait = this.usingCustomTemplate 
       ? appConfig.e2b.viteStartupDelayWithTemplate 
       : appConfig.e2b.viteStartupDelay;
-    await new Promise(resolve => setTimeout(resolve, startupDelay));
+    await this.waitForViteReady(maxWait);
   }
 
   getSandboxUrl(): string | null {

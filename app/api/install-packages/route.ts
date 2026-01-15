@@ -69,17 +69,9 @@ export async function POST(request: NextRequest) {
           packages: validPackages 
         });
         
-        // Stop any existing development server first
-        await sendProgress({ type: 'status', message: 'Stopping development server...' });
-        
-        try {
-          // Try to kill any running dev server processes
-          await providerInstance.runCommand('pkill -f vite');
-          await new Promise(resolve => setTimeout(resolve, 1000)); // Wait a bit
-        } catch (killError) {
-          // It's OK if no process is found
-          console.debug('[install-packages] No existing dev server found:', killError);
-        }
+        // Note: We no longer stop Vite before installing packages
+        // npm install can run while Vite is running, and the provider will restart Vite after install
+        // This saves 5-10 seconds by avoiding unnecessary stop/start cycle
         
         // Check which packages are already installed
         await sendProgress({ 

@@ -49,12 +49,13 @@ export const appConfig = {
     // Development server port (E2B uses 5173 for Vite)
     vitePort: 5173,
 
-    // Time to wait for Vite dev server to be ready (in milliseconds)
-    // Reduced when using custom template (dependencies pre-installed)
-    viteStartupDelay: 10000,
+    // Maximum time to wait for Vite dev server to be ready (in milliseconds)
+    // Now used as max wait for health check polling (actual wait is often shorter)
+    viteStartupDelay: 8000,
     
-    // Reduced startup delay when using custom template
-    viteStartupDelayWithTemplate: 3000,
+    // Reduced max wait when using custom template (dependencies pre-installed)
+    // Health check usually completes in 500-1500ms with template
+    viteStartupDelayWithTemplate: 2000,
 
     // Working directory in sandbox
     workingDirectory: '/home/user/app',
@@ -117,10 +118,12 @@ export const appConfig = {
   // Code Application Configuration
   codeApplication: {
     // Delay after applying code before refreshing iframe (milliseconds)
-    defaultRefreshDelay: 2000,
+    // Allow time for Vite HMR to process file changes
+    defaultRefreshDelay: 1500,
     
     // Delay when packages are installed (milliseconds)
-    packageInstallRefreshDelay: 5000,
+    // Reduced since Vite restart now uses health check polling
+    packageInstallRefreshDelay: 3000,
     
     // Enable/disable automatic truncation recovery
     enableTruncationRecovery: false, // Disabled - too many false positives
