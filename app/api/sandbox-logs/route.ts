@@ -1,12 +1,15 @@
 import { NextResponse } from 'next/server';
+import { SandboxProvider } from '@/lib/sandbox/types';
 
 declare global {
-  var activeSandbox: any;
+  var activeSandboxProvider: SandboxProvider | null;
 }
 
 export async function GET() {
   try {
-    if (!global.activeSandbox) {
+    const provider = global.activeSandboxProvider;
+    
+    if (!provider) {
       return NextResponse.json({ 
         success: false, 
         error: 'No active sandbox' 
@@ -16,16 +19,13 @@ export async function GET() {
     console.log('[sandbox-logs] Fetching Vite dev server logs...');
     
     // Check if Vite processes are running
-    const psResult = await global.activeSandbox.runCommand({
-      cmd: 'ps',
-      args: ['aux']
-    });
+    const psResult = await provider.runCommand('ps aux');
     
     let viteRunning = false;
     const logContent: string[] = [];
     
     if (psResult.exitCode === 0) {
-      const psOutput = await psResult.stdout();
+      const psOutput = psResult.stdout;
       const viteProcesses = psOutput.split('\n').filter((line: string) => 
         line.toLowerCase().includes('vite') || 
         line.toLowerCase().includes('npm run dev')
@@ -43,25 +43,18 @@ export async function GET() {
     
     // Try to read any recent log files
     try {
-      const findResult = await global.activeSandbox.runCommand({
-        cmd: 'find',
-        args: ['/tmp', '-name', '*vite*', '-name', '*.log', '-type', 'f']
-      });
+      const findResult = await provider.runCommand('find /tmp -name "*vite*" -name "*.log" -type f 2>/dev/null');
       
-      if (findResult.exitCode === 0) {
-        const logFiles = (await findResult.stdout()).split('\n').filter((f: string) => f.trim());
+      if (findResult.exitCode === 0 && findResult.stdout.trim()) {
+        const logFiles = findResult.stdout.split('\n').filter((f: string) => f.trim());
         
         for (const logFile of logFiles.slice(0, 2)) {
           try {
-            const catResult = await global.activeSandbox.runCommand({
-              cmd: 'tail',
-              args: ['-n', '10', logFile]
-            });
+            const tailResult = await provider.runCommand(`tail -n 10 "${logFile}"`);
             
-            if (catResult.exitCode === 0) {
-              const logFileContent = await catResult.stdout();
+            if (tailResult.exitCode === 0) {
               logContent.push(`--- ${logFile} ---`);
-              logContent.push(logFileContent);
+              logContent.push(tailResult.stdout);
             }
           } catch {
             // Skip if can't read log file

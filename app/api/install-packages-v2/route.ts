@@ -3,7 +3,7 @@ import { SandboxProvider } from '@/lib/sandbox/types';
 import { sandboxManager } from '@/lib/sandbox/sandbox-manager';
 
 declare global {
-  var activeSandboxProvider: any;
+  var activeSandboxProvider: SandboxProvider | null;
 }
 
 export async function POST(request: NextRequest) {

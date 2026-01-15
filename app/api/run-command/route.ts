@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
+import type { SandboxProvider } from '@/lib/sandbox/types';
 
-// Get active sandbox from global state (in production, use a proper state management solution)
 declare global {
-  var activeSandbox: any;
+  var activeSandboxProvider: SandboxProvider | null;
 }
 
 export async function POST(request: NextRequest) {
@@ -16,7 +16,9 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
     
-    if (!global.activeSandbox) {
+    const provider = global.activeSandboxProvider;
+    
+    if (!provider) {
       return NextResponse.json({ 
         success: false, 
         error: 'No active sandbox' 
@@ -25,24 +27,12 @@ export async function POST(request: NextRequest) {
     
     console.log(`[run-command] Executing: ${command}`);
     
-    // Parse command and arguments
-    const commandParts = command.trim().split(/\s+/);
-    const cmd = commandParts[0];
-    const args = commandParts.slice(1);
-    
-    // Execute command using Vercel Sandbox
-    const result = await global.activeSandbox.runCommand({
-      cmd,
-      args
-    });
-    
-    // Get output streams
-    const stdout = await result.stdout();
-    const stderr = await result.stderr();
+    // Execute command using provider
+    const result = await provider.runCommand(command);
     
     const output = [
-      stdout ? `STDOUT:\n${stdout}` : '',
-      stderr ? `\nSTDERR:\n${stderr}` : '',
+      result.stdout ? `STDOUT:\n${result.stdout}` : '',
+      result.stderr ? `\nSTDERR:\n${result.stderr}` : '',
       `\nExit code: ${result.exitCode}`
     ].filter(Boolean).join('');
     

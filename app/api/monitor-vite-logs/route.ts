@@ -1,12 +1,15 @@
 import { NextResponse } from 'next/server';
+import type { SandboxProvider } from '@/lib/sandbox/types';
 
 declare global {
-  var activeSandbox: any;
+  var activeSandboxProvider: SandboxProvider | null;
 }
 
 export async function GET() {
   try {
-    if (!global.activeSandbox) {
+    const provider = global.activeSandboxProvider;
+    
+    if (!provider) {
       return NextResponse.json({ 
         success: false, 
         error: 'No active sandbox' 
@@ -19,14 +22,10 @@ export async function GET() {
     
     // Check if there's an error file from previous runs
     try {
-      const catResult = await global.activeSandbox.runCommand({
-        cmd: 'cat',
-        args: ['/tmp/vite-errors.json']
-      });
+      const catResult = await provider.runCommand('cat /tmp/vite-errors.json');
       
       if (catResult.exitCode === 0) {
-        const errorFileContent = await catResult.stdout();
-        const data = JSON.parse(errorFileContent);
+        const data = JSON.parse(catResult.stdout);
         errors.push(...(data.errors || []));
       }
     } catch {
@@ -35,23 +34,17 @@ export async function GET() {
     
     // Look for any Vite-related log files that might contain errors
     try {
-      const findResult = await global.activeSandbox.runCommand({
-        cmd: 'find',
-        args: ['/tmp', '-name', '*vite*', '-type', 'f']
-      });
+      const findResult = await provider.runCommand('find /tmp -name "*vite*" -type f 2>/dev/null');
       
-      if (findResult.exitCode === 0) {
-        const logFiles = (await findResult.stdout()).split('\n').filter((f: string) => f.trim());
+      if (findResult.exitCode === 0 && findResult.stdout.trim()) {
+        const logFiles = findResult.stdout.split('\n').filter((f: string) => f.trim());
         
         for (const logFile of logFiles.slice(0, 3)) {
           try {
-            const grepResult = await global.activeSandbox.runCommand({
-              cmd: 'grep',
-              args: ['-i', 'failed to resolve import', logFile]
-            });
+            const grepResult = await provider.runCommand(`grep -i "failed to resolve import" "${logFile}" 2>/dev/null`);
             
             if (grepResult.exitCode === 0) {
-              const errorLines = (await grepResult.stdout()).split('\n').filter((line: string) => line.trim());
+              const errorLines = grepResult.stdout.split('\n').filter((line: string) => line.trim());
               
               for (const line of errorLines) {
                 // Extract package name from error line

@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 import { sandboxManager } from '@/lib/sandbox/sandbox-manager';
+import type { SandboxProvider } from '@/lib/sandbox/types';
 
 declare global {
-  var activeSandboxProvider: any;
+  var activeSandboxProvider: SandboxProvider | null;
   var sandboxData: any;
   var existingFiles: Set<string>;
 }

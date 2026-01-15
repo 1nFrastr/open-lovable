@@ -1,4 +1,5 @@
 // Global types for sandbox file management
+import type { SandboxProvider } from '@/lib/sandbox/types';
 
 export interface SandboxFile {
   content: string;
@@ -23,7 +24,7 @@ export interface SandboxState {
 
 // Declare global types
 declare global {
-  var activeSandbox: any;
+  var activeSandboxProvider: SandboxProvider | null;
   var sandboxState: SandboxState;
   var existingFiles: Set<string>;
 }

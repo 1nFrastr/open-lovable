@@ -331,7 +331,7 @@ User request: "${prompt}"`;
             console.log('[generate-ai-code-stream] WARNING: No manifest available for edit mode!');
             
             // Try to fetch files from sandbox if we have one
-            if (global.activeSandbox) {
+            if (global.activeSandboxProvider) {
               await sendProgress({ type: 'status', message: 'Fetching current files from sandbox...' });
               
               try {
@@ -861,7 +861,7 @@ MORPH FAST APPLY MODE (EDIT-ONLY):
           console.log('[generate-ai-code-stream] - Has manifest:', !!global.sandboxState?.fileCache?.manifest);
           
           // If no backend files and we're in edit mode, try to fetch from sandbox
-          if (!hasBackendFiles && isEdit && (global.activeSandbox || context?.sandboxId)) {
+          if (!hasBackendFiles && isEdit && (global.activeSandboxProvider || context?.sandboxId)) {
             console.log('[generate-ai-code-stream] No backend files, attempting to fetch from sandbox...');
             
             try {

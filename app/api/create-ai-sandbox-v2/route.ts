@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { SandboxFactory } from '@/lib/sandbox/factory';
 import type { SandboxState } from '@/types/sandbox';
+import type { SandboxProvider } from '@/lib/sandbox/types';
 import { sandboxManager } from '@/lib/sandbox/sandbox-manager';
 import { getTemplateByName, DEFAULT_TEMPLATE } from '@/config/templates';
 import type { TemplateFile } from '@/types/template';
@@ -8,8 +9,7 @@ import { getBundledTemplate, hasBundledTemplate } from '@/lib/templates';
 
 // Store active sandbox globally
 declare global {
-  var activeSandboxProvider: any;
-  var activeSandbox: any; // Legacy compatibility
+  var activeSandboxProvider: SandboxProvider | null;
   var sandboxData: any;
   var existingFiles: Set<string>;
   var sandboxState: SandboxState;
@@ -61,15 +61,14 @@ export async function POST(request: NextRequest) {
     console.log('[create-ai-sandbox-v2] Cleaning up existing sandboxes...');
     await sandboxManager.terminateAll();
     
-    // Also clean up legacy global state
+    // Clean up existing global sandbox
     if (global.activeSandboxProvider) {
       try {
         await global.activeSandboxProvider.terminate();
       } catch (e) {
-        console.error('Failed to terminate legacy global sandbox:', e);
+        console.error('Failed to terminate global sandbox:', e);
       }
       global.activeSandboxProvider = null;
-      global.activeSandbox = null;
     }
     
     // Clear existing files tracking
@@ -134,9 +133,8 @@ export async function POST(request: NextRequest) {
     // Register with sandbox manager
     sandboxManager.registerSandbox(sandboxInfo.sandboxId, provider);
     
-    // Also store in legacy global state for backward compatibility
+    // Store in global state
     global.activeSandboxProvider = provider;
-    global.activeSandbox = provider; // For APIs that use activeSandbox
     global.sandboxData = {
       sandboxId: sandboxInfo.sandboxId,
       url: sandboxInfo.url
@@ -189,7 +187,6 @@ export async function POST(request: NextRequest) {
         console.error('Failed to terminate sandbox on error:', e);
       }
       global.activeSandboxProvider = null;
-      global.activeSandbox = null;
     }
     
     return NextResponse.json(

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
+import type { SandboxProvider } from '@/lib/sandbox/types';
 
 declare global {
-  var activeSandboxProvider: any;
+  var activeSandboxProvider: SandboxProvider | null;
 }
 
 export async function POST(request: NextRequest) {

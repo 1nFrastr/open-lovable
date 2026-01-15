@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { parseMorphEdits, applyMorphEditToFile } from '@/lib/morph-fast-apply';
-// Sandbox import not needed - using global sandbox from sandbox-manager
 import type { SandboxState } from '@/types/sandbox';
+import type { SandboxProvider } from '@/lib/sandbox/types';
 import type { ConversationState } from '@/types/conversation';
 import { sandboxManager } from '@/lib/sandbox/sandbox-manager';
 
 declare global {
   var conversationState: ConversationState | null;
-  var activeSandboxProvider: any;
+  var activeSandboxProvider: SandboxProvider | null;
   var existingFiles: Set<string>;
   var sandboxState: SandboxState;
 }
@@ -536,8 +536,7 @@ export async function POST(request: NextRequest) {
         // If Morph is enabled and we have edits, apply them before file writes
         const morphUpdatedPaths = new Set<string>();
         if (morphEnabled && morphEdits.length > 0) {
-          const morphSandbox = (global as any).activeSandbox || providerInstance;
-          if (!morphSandbox) {
+          if (!providerInstance) {
             console.warn('[apply-ai-code-stream] No sandbox available to apply Morph edits');
             await sendProgress({ type: 'warning', message: 'No sandbox available to apply Morph edits' });
           } else {
@@ -546,7 +545,7 @@ export async function POST(request: NextRequest) {
               try {
                 await sendProgress({ type: 'file-progress', current: idx + 1, total: morphEdits.length, fileName: edit.targetFile, action: 'morph-applying' });
                 const result = await applyMorphEditToFile({
-                  sandbox: morphSandbox,
+                  sandbox: providerInstance,
                   targetPath: edit.targetFile,
                   instructions: edit.instructions,
                   updateSnippet: edit.update

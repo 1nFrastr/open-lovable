@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { parseMorphEdits, applyMorphEditToFile } from '@/lib/morph-fast-apply';
 import type { SandboxState } from '@/types/sandbox';
+import type { SandboxProvider } from '@/lib/sandbox/types';
 import type { ConversationState } from '@/types/conversation';
 
 declare global {
@@ -128,8 +129,7 @@ function parseAIResponse(response: string): ParsedResponse {
 }
 
 declare global {
-  var activeSandbox: any;
-  var activeSandboxProvider: any;
+  var activeSandboxProvider: SandboxProvider | null;
   var existingFiles: Set<string>;
   var sandboxState: SandboxState;
 }
@@ -163,8 +163,8 @@ export async function POST(request: NextRequest) {
       global.existingFiles = new Set<string>();
     }
     
-    // Get the active sandbox or provider
-    const sandbox = global.activeSandbox || global.activeSandboxProvider;
+    // Get the active sandbox provider
+    const sandbox = global.activeSandboxProvider;
     
     // If no active sandbox, just return parsed results
     if (!sandbox) {
@@ -348,14 +348,14 @@ export async function POST(request: NextRequest) {
     const morphUpdatedPaths = new Set<string>();
 
     if (morphEnabled && morphEdits.length > 0) {
-      if (!global.activeSandbox) {
+      if (!global.activeSandboxProvider) {
         console.warn('[apply-ai-code] Morph edits found but no active sandbox; skipping Morph application');
       } else {
         console.log(`[apply-ai-code] Applying ${morphEdits.length} fast edits via Morph...`);
         for (const edit of morphEdits) {
           try {
             const result = await applyMorphEditToFile({
-              sandbox: global.activeSandbox,
+              sandbox: global.activeSandboxProvider,
               targetPath: edit.targetFile,
               instructions: edit.instructions,
               updateSnippet: edit.update

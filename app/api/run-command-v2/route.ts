@@ -4,7 +4,7 @@ import { sandboxManager } from '@/lib/sandbox/sandbox-manager';
 
 // Get active sandbox provider from global state
 declare global {
-  var activeSandboxProvider: any;
+  var activeSandboxProvider: SandboxProvider | null;
 }
 
 export async function POST(request: NextRequest) {

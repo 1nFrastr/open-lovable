@@ -2,11 +2,11 @@ import { NextResponse } from 'next/server';
 import { parseJavaScriptFile, buildComponentTree } from '@/lib/file-parser';
 import { FileManifest, FileInfo, RouteInfo } from '@/types/file-manifest';
 import { SandboxProvider } from '@/lib/sandbox/types';
+import type { SandboxState } from '@/types/sandbox';
 
 declare global {
-  var activeSandbox: any;
   var activeSandboxProvider: SandboxProvider | null;
-  var sandboxState: any;
+  var sandboxState: SandboxState;
 }
 
 export async function GET() {
@@ -14,11 +14,9 @@ export async function GET() {
     const MAX_FILE_SIZE_BYTES = 50 * 1024; // 50KB
     const EXCLUDED_FILES = new Set(['package-lock.json']);
 
-    // Support both legacy activeSandbox and new activeSandboxProvider
     const provider = global.activeSandboxProvider;
-    const legacySandbox = global.activeSandbox;
     
-    if (!provider && !legacySandbox) {
+    if (!provider) {
       console.log('[get-sandbox-files] No active sandbox found');
       return NextResponse.json({
         success: false,
@@ -27,7 +25,6 @@ export async function GET() {
     }
 
     console.log('[get-sandbox-files] Fetching and analyzing file structure...');
-    console.log('[get-sandbox-files] Using provider:', !!provider, 'Legacy sandbox:', !!legacySandbox);
     
     // Track all files for structure (before size filtering)
     let allFilePaths: string[] = [];
@@ -35,7 +32,7 @@ export async function GET() {
     let pathsToRead: string[] = [];
     
     // Use provider's listFilesWithSize method if available (most efficient - single command)
-    if (provider && typeof (provider as any).listFilesWithSize === 'function') {
+    if (typeof (provider as any).listFilesWithSize === 'function') {
       try {
         const filesWithSize = await (provider as any).listFilesWithSize() as Array<{ path: string; size: number }>;
         console.log('[get-sandbox-files] Provider returned', filesWithSize.length, 'files with size info');
@@ -59,7 +56,7 @@ export async function GET() {
     }
     
     // Fallback to listFiles without size info
-    if (allFilePaths.length === 0 && provider) {
+    if (allFilePaths.length === 0) {
       try {
         allFilePaths = await provider.listFiles();
         console.log('[get-sandbox-files] Provider returned', allFilePaths.length, 'files (no size info)');
@@ -72,43 +69,6 @@ export async function GET() {
       } catch (e) {
         console.error('[get-sandbox-files] Provider listFiles failed:', e);
       }
-    }
-    
-    // Fallback to legacy method
-    if (allFilePaths.length === 0 && legacySandbox) {
-      const findResult = await legacySandbox.runCommand({
-        cmd: 'find',
-        args: [
-          '.',
-          '-name', 'node_modules', '-prune', '-o',
-          '-name', '.git', '-prune', '-o',
-          '-name', 'dist', '-prune', '-o',
-          '-name', 'build', '-prune', '-o',
-          '-type', 'f',
-          '(',
-          '-name', '*.jsx',
-          '-o', '-name', '*.js',
-          '-o', '-name', '*.tsx',
-          '-o', '-name', '*.ts',
-          '-o', '-name', '*.css',
-          '-o', '-name', '*.json',
-          ')',
-          '-print'
-        ]
-      });
-      
-      if (findResult.exitCode !== 0) {
-        throw new Error('Failed to list files');
-      }
-      
-      allFilePaths = (await findResult.stdout()).split('\n')
-        .filter((f: string) => f.trim())
-        .map((f: string) => f.replace(/^\.\//, ''));
-      
-      pathsToRead = allFilePaths.filter(f => {
-        const fileName = f.split('/').pop() || '';
-        return !EXCLUDED_FILES.has(fileName);
-      });
     }
     
     // Filter to only relevant file types
@@ -126,11 +86,11 @@ export async function GET() {
     // Read content of files in parallel (much faster than sequential)
     let filesContent: Record<string, string> = {};
     
-    if (provider && typeof (provider as any).readFilesParallel === 'function') {
+    if (typeof (provider as any).readFilesParallel === 'function') {
       // Use optimized parallel read method
       console.log('[get-sandbox-files] Using parallel file read for', pathsToRead.length, 'files');
       filesContent = await (provider as any).readFilesParallel(pathsToRead);
-    } else if (provider) {
+    } else {
       // Fallback to parallel Promise.all with individual reads
       console.log('[get-sandbox-files] Using Promise.all fallback for', pathsToRead.length, 'files');
       const readPromises = pathsToRead.map(async (relativePath) => {
@@ -148,65 +108,21 @@ export async function GET() {
           filesContent[result.path] = result.content;
         }
       }
-    } else if (legacySandbox) {
-      // Legacy method: sequential reads with size check
-      for (const filePath of pathsToRead) {
-        try {
-          const statResult = await legacySandbox.runCommand({
-            cmd: 'stat',
-            args: ['-f', '%z', filePath]
-          });
-          
-          if (statResult.exitCode === 0) {
-            const fileSize = parseInt(await statResult.stdout());
-            
-            // Only read files smaller than limit
-            if (fileSize <= MAX_FILE_SIZE_BYTES) {
-              const catResult = await legacySandbox.runCommand({
-                cmd: 'cat',
-                args: [filePath]
-              });
-              
-              if (catResult.exitCode === 0) {
-                filesContent[filePath] = await catResult.stdout();
-              }
-            }
-          }
-        } catch (parseError) {
-          console.debug('Error reading file:', filePath, parseError);
-          continue;
+    }
+    
+    // Build directory structure from file list
+    const dirs = new Set<string>();
+    for (const file of allFilePaths) {
+      const parts = file.split('/');
+      let path = '';
+      for (let i = 0; i < parts.length - 1; i++) {
+        path = path ? `${path}/${parts[i]}` : parts[i];
+        if (!path.includes('node_modules') && !path.includes('.git')) {
+          dirs.add(path);
         }
       }
     }
-    
-    // Get directory structure
-    let structure = '';
-    
-    if (provider) {
-      // Build structure from file list (use allFilePaths to include large files in structure)
-      const dirs = new Set<string>();
-      for (const file of allFilePaths) {
-        const parts = file.split('/');
-        let path = '';
-        for (let i = 0; i < parts.length - 1; i++) {
-          path = path ? `${path}/${parts[i]}` : parts[i];
-          if (!path.includes('node_modules') && !path.includes('.git')) {
-            dirs.add(path);
-          }
-        }
-      }
-      structure = Array.from(dirs).slice(0, 50).join('\n');
-    } else if (legacySandbox) {
-      const treeResult = await legacySandbox.runCommand({
-        cmd: 'find',
-        args: ['.', '-type', 'd', '-not', '-path', '*/node_modules*', '-not', '-path', '*/.git*']
-      });
-      
-      if (treeResult.exitCode === 0) {
-        const dirs = (await treeResult.stdout()).split('\n').filter((d: string) => d.trim());
-        structure = dirs.slice(0, 50).join('\n'); // Limit to 50 lines
-      }
-    }
+    const structure = Array.from(dirs).slice(0, 50).join('\n');
     
     // Build enhanced file manifest
     const fileManifest: FileManifest = {
