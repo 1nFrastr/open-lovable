@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { sandboxManager } from '~/lib/sandbox/sandbox-manager';
+import { sandboxManager } from '@/lib/sandbox/sandbox-manager';
 
 export async function POST(request: NextRequest) {
   try {
