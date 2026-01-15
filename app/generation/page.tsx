@@ -1220,6 +1220,27 @@ Tip: I automatically detect and install npm packages from your code imports (lik
               updatedSandboxFiles[path] = content;
             }
             
+            // If packages were installed, fetch updated package.json from container
+            // because npm modifies it and our local cache doesn't have those changes
+            const packagesInstalled = results?.packagesInstalled?.length > 0;
+            if (packagesInstalled) {
+              console.log('[applyGeneratedCode] Packages installed, fetching updated package.json from container...');
+              try {
+                const pkgResponse = await fetch('/api/read-sandbox-file', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ path: 'package.json' })
+                });
+                const pkgData = await pkgResponse.json();
+                if (pkgData.success && pkgData.content) {
+                  updatedSandboxFiles['package.json'] = pkgData.content;
+                  console.log('[applyGeneratedCode] Updated package.json from container');
+                }
+              } catch (err) {
+                console.warn('[applyGeneratedCode] Could not fetch package.json:', err);
+              }
+            }
+            
             setSandboxFiles(updatedSandboxFiles);
             console.log('[applyGeneratedCode] Updated sandboxFiles from parsed AI response:', Object.keys(parsedFiles).length, 'new files,', Object.keys(updatedSandboxFiles).length, 'total files');
             
