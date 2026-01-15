@@ -81,13 +81,7 @@ function AISandboxPage() {
   const [responseArea, setResponseArea] = useState<string[]>([]);
   const [structureContent, setStructureContent] = useState('No sandbox created yet');
   const [promptInput, setPromptInput] = useState('');
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
-    {
-      content: 'Welcome! I can help you generate code with full context of your sandbox files and structure. Just start chatting - I\'ll automatically create a sandbox for you if needed!\n\nTip: If you see package errors like "react-router-dom not found", just type "npm install" or "check packages" to automatically install missing packages.',
-      type: 'system',
-      timestamp: new Date()
-    }
-  ]);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [aiChatInput, setAiChatInput] = useState('');
   const [aiEnabled] = useState(true);
   const searchParams = useSearchParams();
@@ -140,6 +134,7 @@ function AISandboxPage() {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const chatMessagesRef = useRef<HTMLDivElement>(null);
   const codeDisplayRef = useRef<HTMLDivElement>(null);
+  const autoSendTriggeredRef = useRef<boolean>(false);
   
   const [codeApplicationState, setCodeApplicationState] = useState<CodeApplicationState>({
     stage: null
@@ -173,6 +168,8 @@ function AISandboxPage() {
 
   // Store flag to trigger generation after component mounts
   const [shouldAutoGenerate, setShouldAutoGenerate] = useState(false);
+  // Store pending message to auto-send after sandbox is ready (for template mode)
+  const [pendingAutoSendMessage, setPendingAutoSendMessage] = useState<string | null>(null);
 
   // Clear old conversation data on component mount and create/restore sandbox
   useEffect(() => {
@@ -216,8 +213,9 @@ function AISandboxPage() {
         setHomeScreenFading(false);
         
         // Create sandbox first (with template name so API can use bundled template)
+        // Skip auto file fetch since we'll handle it after template setup
         sandboxCreated = true;
-        const newSandboxData = await createSandbox(true, selectedTemplate !== 'blank' ? selectedTemplate : undefined);
+        const newSandboxData = await createSandbox(true, selectedTemplate !== 'blank' ? selectedTemplate : undefined, true);
         
         // Now handle template download and setup
         // Skip if sandbox was already initialized with bundled template or custom E2B template
@@ -231,24 +229,25 @@ function AISandboxPage() {
         } else if (selectedTemplate !== 'blank' && shouldSkipTemplateSetup) {
           // Template was already set up via bundled template or E2B custom template
           console.log('[handleHomeSubmit] Using pre-installed template, skipping handleTemplateSetup');
-          addChatMessage(
-            `🚀 Project "${projectTitle}" initialized with ${selectedTemplate} template!\n\n` +
-            `The sandbox is ready. What would you like to build?`,
-            'system'
-          );
-          setAiChatInput(projectPrompt);
           
-          // Refresh sandbox files after setup
-          setTimeout(fetchSandboxFiles, 2000);
+          // Wait for sandbox files to sync, then start AI generation
+          // Use a longer delay to ensure files are ready and avoid duplicate calls
+          setTimeout(async () => {
+            console.log('[handleHomeSubmit] Syncing sandbox files before AI generation...');
+            await fetchSandboxFiles();
+            console.log('[handleHomeSubmit] Files synced, starting AI generation');
+            // Switch to generation tab and start AI
+            setActiveTab('generation');
+            setPendingAutoSendMessage(projectPrompt);
+          }, 2500);
         } else {
-          // Blank template - show message and pre-fill the prompt
-          addChatMessage(
-            `📄 Starting blank project: "${projectTitle}"\n\n` +
-            `The sandbox is ready. Describe what you want to build!`,
-            'system'
-          );
-          // Pre-fill the input with user's request
-          setAiChatInput(projectPrompt);
+          // Blank template - wait for sandbox to be ready, then start AI generation
+          setTimeout(async () => {
+            console.log('[handleHomeSubmit] Blank template ready, starting AI generation');
+            await fetchSandboxFiles();
+            setActiveTab('generation');
+            setPendingAutoSendMessage(projectPrompt);
+          }, 2000);
         }
         
         return;
@@ -463,6 +462,22 @@ function AISandboxPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shouldAutoGenerate, homeUrlInput, showHomeScreen]);
 
+  // Auto-send chat message when sandbox is ready (for template mode)
+  useEffect(() => {
+    if (pendingAutoSendMessage && sandboxData && !showHomeScreen && !autoSendTriggeredRef.current) {
+      const messageToSend = pendingAutoSendMessage;
+      autoSendTriggeredRef.current = true;
+      setPendingAutoSendMessage(null);
+      
+      // Small delay to ensure UI is ready
+      setTimeout(() => {
+        console.log('[generation] Auto-sending chat message after sandbox ready:', messageToSend);
+        sendChatMessage(messageToSend);
+      }, 500);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingAutoSendMessage, sandboxData, showHomeScreen]);
+
   const updateStatus = (text: string, active: boolean) => {
     setStatus({ text, active });
   };
@@ -614,7 +629,7 @@ function AISandboxPage() {
 
   const sandboxCreationRef = useRef<boolean>(false);
   
-  const createSandbox = async (fromHomeScreen = false, templateName?: string) => {
+  const createSandbox = async (fromHomeScreen = false, templateName?: string, skipAutoFetchFiles = false) => {
     // Prevent duplicate sandbox creation
     if (sandboxCreationRef.current) {
       console.log('[createSandbox] Sandbox creation already in progress, skipping...');
@@ -663,8 +678,10 @@ function AISandboxPage() {
           displayStructure(data.structure);
         }
         
-        // Fetch sandbox files after creation
-        setTimeout(fetchSandboxFiles, 1000);
+        // Fetch sandbox files after creation (unless skipped for template mode)
+        if (!skipAutoFetchFiles) {
+          setTimeout(fetchSandboxFiles, 1000);
+        }
         
         // For Vercel sandboxes, Vite is already started during setupViteApp
         // No need to restart it immediately after creation
@@ -782,12 +799,6 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       // Use the passed sandbox data or fall back to state
       const activeSandboxData = newSandboxData || sandboxData;
       
-      // Refresh sandbox files after a delay
-      setTimeout(() => {
-        console.log('[handleTemplateSetup] Refreshing sandbox files...');
-        fetchSandboxFiles();
-      }, 2000);
-      
       // Refresh iframe with the correct URL
       const sandboxUrl = activeSandboxData?.url;
       if (iframeRef.current && sandboxUrl) {
@@ -825,18 +836,24 @@ Tip: I automatically detect and install npm packages from your code imports (lik
         }]
       }));
       
-      // Store the user's original request for reference, but DON'T auto-trigger AI
-      // The user should explicitly ask for modifications
-      console.log('[handleTemplateSetup] Template setup complete. User prompt stored:', userPrompt);
+      // Wait for files to sync, then start AI generation
+      console.log('[handleTemplateSetup] Template setup complete. Waiting for files to sync...');
       
-      // Pre-fill the input with context about what the user wanted
-      // so they can easily continue
-      if (userPrompt && !userPrompt.toLowerCase().includes('create a react') && 
+      // Build the message based on the user's prompt
+      const messageToSend = userPrompt && !userPrompt.toLowerCase().includes('create a react') && 
           !userPrompt.toLowerCase().includes('create a vue') &&
-          !userPrompt.toLowerCase().includes('create a next')) {
-        // Only pre-fill if the prompt wasn't just "create a X project"
-        setAiChatInput(`Based on the ${template.label} template, ${userPrompt}`);
-      }
+          !userPrompt.toLowerCase().includes('create a next')
+        ? `Based on the ${template.label} template, ${userPrompt}`
+        : userPrompt;
+      
+      // Sync files, switch to generation tab, and start AI
+      setTimeout(async () => {
+        console.log('[handleTemplateSetup] Syncing sandbox files before AI generation...');
+        await fetchSandboxFiles();
+        console.log('[handleTemplateSetup] Files synced, switching to generation tab and starting AI');
+        setActiveTab('generation');
+        setPendingAutoSendMessage(messageToSend);
+      }, 2000);
       
     } catch (error: any) {
       console.error('[handleTemplateSetup] Error:', error);
@@ -1156,8 +1173,45 @@ Tip: I automatically detect and install npm packages from your code imports (lik
             addChatMessage(`⚠️ Some packages failed to install. Check the error banner above for details.`, 'system');
           }
           
-          // Fetch updated file structure
-          await fetchSandboxFiles();
+          // Force sync files from container after apply (always update, don't skip)
+          console.log('[applyGeneratedCode] Force syncing files from container...');
+          try {
+            const response = await fetch('/api/get-sandbox-files');
+            const data = await response.json();
+            if (data.success && data.files) {
+              const files = data.files;
+              console.log('[applyGeneratedCode] Fetched', Object.keys(files).length, 'files from container');
+              
+              // Update sandboxFiles state
+              setSandboxFiles(files);
+              
+              // Force update generationProgress.files with fresh content from container
+              const progressFiles = Object.entries(files).map(([path, content]) => {
+                const ext = path.split('.').pop()?.toLowerCase() || '';
+                let type = 'utility';
+                if (['tsx', 'jsx'].includes(ext)) type = 'component';
+                else if (ext === 'css') type = 'style';
+                else if (ext === 'json') type = 'config';
+                
+                return {
+                  path,
+                  content: content as string,
+                  type,
+                  completed: true
+                };
+              });
+              
+              setGenerationProgress(prev => ({
+                ...prev,
+                files: progressFiles,
+                status: 'Files synced from container'
+              }));
+              
+              console.log('[applyGeneratedCode] Updated generationProgress.files with', progressFiles.length, 'files');
+            }
+          } catch (error) {
+            console.error('[applyGeneratedCode] Error syncing files:', error);
+          }
           
           // Skip automatic package check - it's not needed here and can cause false "no sandbox" messages
           // Packages are already installed during the apply-ai-code-stream process
@@ -1316,8 +1370,9 @@ Tip: I automatically detect and install npm packages from your code imports (lik
           
           // Also populate generationProgress.files so the Code tab can display them
           // This is needed when files are loaded from a template (not from AI generation)
+          // IMPORTANT: Don't interfere if generation is in progress or files already exist
           const fileEntries = Object.entries(files);
-          if (fileEntries.length > 0 && generationProgress.files.length === 0) {
+          if (fileEntries.length > 0) {
             const progressFiles = fileEntries.map(([path, content]) => {
               // Determine file type from extension
               const ext = path.split('.').pop()?.toLowerCase() || '';
@@ -1334,22 +1389,46 @@ Tip: I automatically detect and install npm packages from your code imports (lik
               };
             });
             
-            setGenerationProgress(prev => ({
-              ...prev,
-              files: progressFiles,
-              isGenerating: false,
-              status: 'Files loaded from sandbox'
-            }));
+            setGenerationProgress(prev => {
+              // Don't overwrite files if:
+              // 1. Generation is in progress
+              // 2. Files already exist from AI generation (don't replace with sandbox cache)
+              if (prev.isGenerating || prev.files.length > 0) {
+                console.log('[fetchSandboxFiles] Skipping file population - generation in progress or files already exist:', {
+                  isGenerating: prev.isGenerating,
+                  existingFiles: prev.files.length
+                });
+                return prev;
+              }
+              
+              console.log('[fetchSandboxFiles] Populating files from sandbox:', progressFiles.length, 'files');
+              
+              // Auto-select the first source file for display
+              const firstSourceFile = progressFiles.find(f => 
+                f.path.endsWith('.tsx') || f.path.endsWith('.jsx') || f.path.endsWith('.ts') || f.path.endsWith('.js')
+              );
+              if (firstSourceFile && !selectedFile) {
+                // Note: Can't call setSelectedFile here, will do it below
+              }
+              
+              return {
+                ...prev,
+                files: progressFiles,
+                isGenerating: false,
+                status: 'Files loaded from sandbox'
+              };
+            });
             
-            // Auto-select the first source file for display
-            const firstSourceFile = progressFiles.find(f => 
-              f.path.endsWith('.tsx') || f.path.endsWith('.jsx') || f.path.endsWith('.ts') || f.path.endsWith('.js')
-            );
-            if (firstSourceFile && !selectedFile) {
-              setSelectedFile(firstSourceFile.path);
+            // Auto-select file outside of setGenerationProgress
+            // Only if no file is currently selected
+            if (!selectedFile) {
+              const firstSourceFile = progressFiles.find(f => 
+                f.path.endsWith('.tsx') || f.path.endsWith('.jsx') || f.path.endsWith('.ts') || f.path.endsWith('.js')
+              );
+              if (firstSourceFile) {
+                setSelectedFile(firstSourceFile.path);
+              }
             }
-            
-            console.log('[fetchSandboxFiles] Populated generationProgress.files with', progressFiles.length, 'files');
           }
         } else {
           console.log('[fetchSandboxFiles] API returned success=false:', data.error);
@@ -1426,6 +1505,67 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                 <BsFolderFill style={{ width: '16px', height: '16px' }} />
                 <span className="text-sm font-medium">Explorer</span>
               </div>
+              <button
+                onClick={async () => {
+                  console.log('[syncFromContainer] Starting sync...');
+                  console.log('[syncFromContainer] Current generationProgress.files:', generationProgress.files.map(f => f.path));
+                  
+                  // Force fetch files from container and update generationProgress
+                  try {
+                    const response = await fetch('/api/get-sandbox-files');
+                    const data = await response.json();
+                    if (data.success && data.files) {
+                      const files = data.files;
+                      console.log('[syncFromContainer] Fetched files from container:', Object.keys(files));
+                      
+                      // Update sandboxFiles state
+                      setSandboxFiles(files);
+                      
+                      // Force update generationProgress.files with fresh content
+                      const progressFiles = Object.entries(files).map(([path, content]) => {
+                        const ext = path.split('.').pop()?.toLowerCase() || '';
+                        let type = 'utility';
+                        if (['tsx', 'jsx'].includes(ext)) type = 'component';
+                        else if (ext === 'css') type = 'style';
+                        else if (ext === 'json') type = 'config';
+                        
+                        return {
+                          path,
+                          content: content as string,
+                          type,
+                          completed: true
+                        };
+                      });
+                      
+                      setGenerationProgress(prev => ({
+                        ...prev,
+                        files: progressFiles,
+                        status: 'Synced from container'
+                      }));
+                      
+                      console.log('[syncFromContainer] Updated generationProgress.files:', progressFiles.map(f => f.path));
+                      
+                      // Auto-select first source file if none selected
+                      if (!selectedFile) {
+                        const firstSourceFile = progressFiles.find(f => 
+                          f.path.endsWith('.tsx') || f.path.endsWith('.jsx')
+                        );
+                        if (firstSourceFile) {
+                          setSelectedFile(firstSourceFile.path);
+                        }
+                      }
+                    }
+                  } catch (error) {
+                    console.error('[syncFromContainer] Error:', error);
+                  }
+                }}
+                className="p-1 hover:bg-gray-200 rounded transition-colors"
+                title="Sync files from container"
+              >
+                <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              </button>
             </div>
             
             {/* File Tree */}
@@ -1995,8 +2135,8 @@ Tip: I automatically detect and install npm packages from your code imports (lik
     return null;
   };
 
-  const sendChatMessage = async () => {
-    const message = aiChatInput.trim();
+  const sendChatMessage = async (directMessage?: string) => {
+    const message = (directMessage || aiChatInput).trim();
     if (!message) return;
     
     if (!aiEnabled) {
@@ -2036,7 +2176,6 @@ Tip: I automatically detect and install npm packages from your code imports (lik
     const isEdit = conversationContext.appliedCode.length > 0;
     
     try {
-      // Generation tab is already active from scraping phase
       setGenerationProgress(prev => ({
         ...prev,  // Preserve all existing state
         isGenerating: true,
