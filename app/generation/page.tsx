@@ -2268,6 +2268,11 @@ Tip: I automatically detect and install npm packages from your code imports (lik
         files: prev.files
       }));
       
+      // Switch to generation tab to show file cards during generation
+      setActiveTab('generation');
+      // Clear selected file to show streaming content instead of a static file
+      setSelectedFile(null);
+      
       // Backend now manages file state - no need to fetch from frontend
       console.log('[chat] Using backend file cache for context');
       
