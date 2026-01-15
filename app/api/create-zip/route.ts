@@ -1,6 +1,18 @@
 import { NextResponse } from 'next/server';
 import { sandboxManager } from '@/lib/sandbox/sandbox-manager';
 
+/**
+ * Generate a random filename for the zip download
+ * Format: project-YYYYMMDD-HHMMSS-XXXX.zip
+ */
+function generateZipFilename(): string {
+  const now = new Date();
+  const date = now.toISOString().slice(0, 10).replace(/-/g, ''); // YYYYMMDD
+  const time = now.toISOString().slice(11, 19).replace(/:/g, ''); // HHMMSS
+  const random = Math.random().toString(36).substring(2, 6); // 4 random chars
+  return `project-${date}-${time}-${random}.zip`;
+}
+
 declare global {
   var activeSandbox: any;
   var activeSandboxProvider: any;
@@ -117,10 +129,12 @@ export async function POST() {
     // Create a data URL for download
     const dataUrl = `data:application/zip;base64,${base64Content}`;
     
+    const fileName = generateZipFilename();
+    
     return NextResponse.json({
       success: true,
       dataUrl,
-      fileName: 'project.zip',
+      fileName,
       message: 'Zip file created successfully'
     });
     
