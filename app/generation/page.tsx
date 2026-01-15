@@ -2348,7 +2348,10 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                   text = text.replace(/<packages>[^<]*<\/packages>/g, '');
                   
                   // Filter out any XML tags and file content that slipped through
-                  if (!text.includes('<file') && !text.includes('import React') && 
+                  if (!text.includes('<file') && !text.includes('</file>') &&
+                      !text.includes('<package') && !text.includes('</package') &&
+                      !text.includes('<explanation') && !text.includes('</explanation') &&
+                      !text.includes('import React') && 
                       !text.includes('export default') && !text.includes('className=') &&
                       text.trim().length > 0) {
                     addChatMessage(text.trim(), 'ai');
@@ -3563,7 +3566,10 @@ Focus on the key sections and content, making it clean and modern.`;
                   text = text.replace(/<packages>[^<]*<\/packages>/g, '');
                   
                   // Filter out any XML tags and file content that slipped through
-                  if (!text.includes('<file') && !text.includes('import React') && 
+                  if (!text.includes('<file') && !text.includes('</file>') &&
+                      !text.includes('<package') && !text.includes('</package') &&
+                      !text.includes('<explanation') && !text.includes('</explanation') &&
+                      !text.includes('import React') && 
                       !text.includes('export default') && !text.includes('className=') &&
                       text.trim().length > 0) {
                     addChatMessage(text.trim(), 'ai');

@@ -1330,8 +1330,8 @@ It's better to have 3 complete files than 10 incomplete files.`
               isInTag = false;
             }
             
-            // If we're not in a tag, buffer as conversational text
-            if (!isInTag && !hasOpenTag) {
+            // If we're not in a tag and text doesn't contain any XML tags, buffer as conversational text
+            if (!isInTag && !hasOpenTag && !hasCloseTag) {
               conversationalBuffer += text;
             }
             
