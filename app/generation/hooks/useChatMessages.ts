@@ -426,6 +426,24 @@ export function useChatMessages(options: UseChatMessagesOptions) {
 
         // Apply the generated code
         await applyGeneratedCode(generatedCode, isEdit);
+
+        // Show completion status briefly then switch to preview
+        setGenerationProgress(prev => ({
+          ...prev,
+          isGenerating: false,
+          isStreaming: false,
+          status: 'Generation complete!',
+          isEdit: prev.isEdit,
+          // Clear thinking state on completion
+          isThinking: false,
+          thinkingText: undefined,
+          thinkingDuration: undefined
+        }));
+
+        setTimeout(() => {
+          // Switch to preview but keep files for display
+          setActiveTab('preview');
+        }, 1000);
       }
 
     } catch (error: any) {
@@ -438,6 +456,8 @@ export function useChatMessages(options: UseChatMessagesOptions) {
         isThinking: false,
         status: 'Generation failed'
       }));
+      // Switch back to preview on error
+      setActiveTab('preview');
     }
   }, [
     aiChatInput,

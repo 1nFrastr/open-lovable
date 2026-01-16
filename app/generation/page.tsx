@@ -93,6 +93,9 @@ import { useSandbox } from './hooks/useSandbox';
 // TEMP: Step 2.2 - Import useCodeGeneration hook for verification
 import { useCodeGeneration } from './hooks/useCodeGeneration';
 
+// TEMP: Step 2.3 - Import useChatMessages hook for verification
+import { useChatMessages } from './hooks/useChatMessages';
+
 // Dynamic import for Terminal component (requires browser APIs)
 const Terminal = dynamic(() => import('@/components/Terminal'), {
   ssr: false,
@@ -216,9 +219,10 @@ function AISandboxPage() {
   
   // TEMP: Step 1.2 - Replace conversationContext with Jotai atom
   const [conversationContext, setConversationContext] = useAtom(conversationContextAtom);
-  
+
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const chatMessagesRef = useRef<HTMLDivElement>(null);
+  // TEMP: Step 2.3 - Removed local chatMessagesRef, now using hook's ref
+  // const chatMessagesRef = useRef<HTMLDivElement>(null);
   const codeDisplayRef = useRef<HTMLDivElement>(null);
   const autoSendTriggeredRef = useRef<boolean>(false);
   
@@ -231,7 +235,22 @@ function AISandboxPage() {
   const codeGenerationHook = useCodeGeneration();
   // Note: codeGenerationHook provides: applyGeneratedCode, captureUrlScreenshot, resetGenerationState,
   // and various setters for generation-related state
-  
+
+  // TEMP: Step 2.3 - Use useChatMessages hook
+  const chatMessagesHook = useChatMessages({
+    createSandbox: sandboxHook.createSandbox,
+    applyGeneratedCode: codeGenerationHook.applyGeneratedCode,
+  });
+  // Note: chatMessagesHook provides: sendChatMessage, handleAIChatSubmit,
+  // addChatMessage, clearChatMessages, chatMessagesRef, and state setters
+
+  const {
+    sendChatMessage,
+    handleAIChatSubmit,
+    chatMessagesRef,
+    // Note: chatMessages, aiChatInput already come from atoms, no need to extract
+  } = chatMessagesHook;
+
   // TEMP: Step 1.3 - Replace codeApplicationState and generationProgress with atoms
   const [codeApplicationState, setCodeApplicationState] = useAtom(codeApplicationStateAtom);
   const [generationProgress, setGenerationProgress] = useAtom(generationProgressAtom);
@@ -554,6 +573,8 @@ function AISandboxPage() {
   // Use functions from useSandbox hook
   const { updateStatus, log, addChatMessage, displayStructure, checkSandboxStatus, createSandbox, fetchSandboxFiles, refreshIframe } = sandboxHook;
   
+  // TEMP: Step 2.3 - checkAndInstallPackages now provided by useChatMessages hook
+  /*
   const checkAndInstallPackages = async () => {
     // This function is only called when user explicitly requests it
     // Don't show error if no sandbox - it's likely being created
@@ -561,10 +582,11 @@ function AISandboxPage() {
       console.log('[checkAndInstallPackages] No sandbox data available yet');
       return;
     }
-    
+
     // Vite error checking removed - handled by template setup
     addChatMessage('Checking packages... Sandbox is ready with Vite configuration.', 'system');
   };
+  */
   
   const handleSurfaceError = (_errors: any[]) => {
     // Function kept for compatibility but Vite errors are now handled by template
@@ -1426,6 +1448,9 @@ function AISandboxPage() {
     return null;
   };
 
+  // TEMP: Step 2.3 - Original sendChatMessage replaced by useChatMessages hook
+  // This ~438-line function is now handled by the hook
+  /*
   const sendChatMessage = async (directMessage?: string) => {
     const message = (directMessage || aiChatInput).trim();
     if (!message) return;
@@ -1864,6 +1889,7 @@ function AISandboxPage() {
       setActiveTab('preview');
     }
   };
+  */
 
 
   const downloadZip = async () => {
