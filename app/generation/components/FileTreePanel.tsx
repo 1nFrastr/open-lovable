@@ -3,18 +3,16 @@
 import React, { useMemo, memo } from 'react';
 import { useAtom, useAtomValue } from 'jotai';
 import {
-  FiFile,
   FiChevronRight,
   FiChevronDown,
   BsFolderFill,
   BsFolder2Open,
-  SiJavascript,
-  SiReact,
-  SiCss3,
-  SiJson,
 } from '@/lib/icons';
+import * as FileIconLib from 'react-file-icon';
 import { selectedFileAtom, expandedFoldersAtom, toggleExpandedFolderAtom } from '../atoms/ui';
 import { generationProgressAtom, type GenerationFile } from '../atoms/generation';
+
+const { FileIcon, defaultStyles } = FileIconLib as any;
 
 interface FileNode {
   name: string;
@@ -25,22 +23,28 @@ interface FileNode {
 }
 
 function getFileIcon(fileName: string) {
-  const ext = fileName.split('.').pop()?.toLowerCase();
-  switch (ext) {
-    case 'jsx':
-    case 'tsx':
-      return <SiReact className="w-4 h-4 text-cyan-500" />;
-    case 'js':
-    case 'ts':
-      return <SiJavascript className="w-4 h-4 text-yellow-500" />;
-    case 'css':
-    case 'scss':
-      return <SiCss3 className="w-4 h-4 text-blue-500" />;
-    case 'json':
-      return <SiJson className="w-4 h-4 text-green-500" />;
-    default:
-      return <FiFile className="w-4 h-4 text-gray-400" />;
-  }
+  const ext = fileName.split('.').pop()?.toLowerCase() || '';
+  
+  // Get default styles for the extension, or use a fallback
+  const iconStyles = defaultStyles?.[ext] || {};
+  
+  return (
+    <div 
+      className="flex-shrink-0" 
+      style={{ 
+        width: '12px', 
+        height: '14px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        filter: 'saturate(1.4) brightness(0.95) contrast(1.1)'
+      }}
+    >
+      <div style={{ width: '100%', height: '100%' }}>
+        <FileIcon extension={ext} {...iconStyles} />
+      </div>
+    </div>
+  );
 }
 
 function buildFileTree(files: GenerationFile[]): FileNode[] {
@@ -128,8 +132,8 @@ const FileTreeItem = memo(function FileTreeItem({ node, depth }: FileTreeItemPro
   return (
     <>
       <div
-        className={`flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-gray-100 rounded ${
-          isSelected ? 'bg-gray-100' : ''
+        className={`flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-white rounded ${
+          isSelected ? 'bg-white shadow-sm' : ''
         }`}
         style={{ paddingLeft: `${depth * 12 + 12}px` }}
         onClick={handleClick}
@@ -137,14 +141,14 @@ const FileTreeItem = memo(function FileTreeItem({ node, depth }: FileTreeItemPro
         {node.type === 'folder' ? (
           <>
             {isExpanded ? (
-              <FiChevronDown className="w-3 h-3 text-gray-400 flex-shrink-0" />
+              <FiChevronDown className="w-3 h-3 text-gray-500 flex-shrink-0" />
             ) : (
-              <FiChevronRight className="w-3 h-3 text-gray-400 flex-shrink-0" />
+              <FiChevronRight className="w-3 h-3 text-gray-500 flex-shrink-0" />
             )}
             {isExpanded ? (
-              <BsFolder2Open className="w-4 h-4 text-yellow-500 flex-shrink-0" />
+              <BsFolder2Open style={{ width: '16px', height: '16px' }} className="text-yellow-600 flex-shrink-0" />
             ) : (
-              <BsFolderFill className="w-4 h-4 text-yellow-500 flex-shrink-0" />
+              <BsFolderFill style={{ width: '16px', height: '16px' }} className="text-yellow-600 flex-shrink-0" />
             )}
           </>
         ) : (
