@@ -14,7 +14,7 @@ declare global {
   var activeSandboxProvider: SandboxProvider | null;
   var existingFiles: Set<string>;
   var sandboxState: SandboxState;
-  var sandboxData: { sandboxId: string; url: string } | undefined;
+  var sandboxData: any;
 }
 
 interface ParsedResponse {

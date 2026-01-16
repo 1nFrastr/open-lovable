@@ -470,9 +470,9 @@ export async function POST(request: NextRequest) {
           if (sandbox.writeFile) {
             // V2: Provider pattern (Vercel/E2B provider)
             await sandbox.writeFile(file.path, fileContent);
-          } else if (sandbox.files?.write) {
+          } else if ('files' in sandbox && (sandbox as any).files?.write) {
             // V1: Direct E2B sandbox
-            await sandbox.files.write(fullPath, fileContent);
+            await (sandbox as any).files.write(fullPath, fileContent);
           } else {
             throw new Error('Unsupported sandbox type');
           }
@@ -570,8 +570,8 @@ export default App;`;
         // Use provider pattern if available
         if (sandbox.writeFile) {
           await sandbox.writeFile('src/App.jsx', appContent);
-        } else if (sandbox.writeFiles) {
-          await sandbox.writeFiles([{
+        } else if ('writeFiles' in sandbox && (sandbox as any).writeFiles) {
+          await (sandbox as any).writeFiles([{
             path: 'src/App.jsx',
             content: Buffer.from(appContent)
           }]);
@@ -623,8 +623,8 @@ body {
           // Use provider pattern if available
           if (sandbox.writeFile) {
             await sandbox.writeFile('src/index.css', indexCssContent);
-          } else if (sandbox.writeFiles) {
-            await sandbox.writeFiles([{
+          } else if ('writeFiles' in sandbox && (sandbox as any).writeFiles) {
+            await (sandbox as any).writeFiles([{
               path: 'src/index.css',
               content: Buffer.from(indexCssContent)
             }]);
@@ -657,7 +657,7 @@ body {
             result = testResult;
           } else {
             // Direct sandbox - expects object with cmd and args
-            result = await sandbox.runCommand({
+            result = await (sandbox as any).runCommand({
               cmd: cmdName,
               args
             });

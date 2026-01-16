@@ -8,8 +8,8 @@ import HeroInput from '@/components/HeroInput';
 import SidebarInput from '@/components/app/generation/SidebarInput';
 import HeaderBrandKit from '@/components/shared/header/BrandKit/BrandKit';
 import { HeaderProvider } from '@/components/shared/header/HeaderContext';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { CodeMirrorEditor } from '@/components/editor/codemirror/CodeMirrorEditor';
+import type { EditorDocument } from '@/components/editor/codemirror/CodeMirrorEditor';
 // Import icons from centralized module to avoid Turbopack chunk issues
 import { 
   FiFile, 
@@ -1800,30 +1800,23 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                           </svg>
                         </button>
                       </div>
-                      <div className="bg-gray-900 border border-gray-700 rounded">
-                        <SyntaxHighlighter
-                          language={(() => {
-                            const ext = selectedFile.split('.').pop()?.toLowerCase();
-                            if (ext === 'css') return 'css';
-                            if (ext === 'json') return 'json';
-                            if (ext === 'html') return 'html';
-                            return 'jsx';
-                          })()}
-                          style={vscDarkPlus}
-                          customStyle={{
-                            margin: 0,
-                            padding: '1rem',
-                            fontSize: '0.875rem',
-                            background: 'transparent',
+                      <div className="bg-gray-900 border border-gray-700 rounded h-[600px]">
+                        <CodeMirrorEditor
+                          theme="dark"
+                          editable={false}
+                          doc={{
+                            value: (() => {
+                              // Find the file content from generated files
+                              const file = generationProgress.files.find(f => f.path === selectedFile);
+                              return file?.content || '// File content will appear here';
+                            })(),
+                            filePath: selectedFile,
                           }}
-                          showLineNumbers={true}
-                        >
-                          {(() => {
-                            // Find the file content from generated files
-                            const file = generationProgress.files.find(f => f.path === selectedFile);
-                            return file?.content || '// File content will appear here';
-                          })()}
-                        </SyntaxHighlighter>
+                          settings={{
+                            fontSize: '14px',
+                            tabSize: 2,
+                          }}
+                        />
                       </div>
                     </div>
                   </div>
@@ -1851,21 +1844,20 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                           <span className="font-mono text-sm">Streaming code...</span>
                         </div>
                       </div>
-                      <div className="p-4 bg-gray-900 rounded">
-                        <SyntaxHighlighter
-                          language="jsx"
-                          style={vscDarkPlus}
-                          customStyle={{
-                            margin: 0,
-                            padding: '1rem',
-                            fontSize: '0.875rem',
-                            background: 'transparent',
+                      <div className="p-4 bg-gray-900 rounded h-[500px] relative">
+                        <CodeMirrorEditor
+                          theme="dark"
+                          editable={false}
+                          doc={{
+                            value: generationProgress.streamedCode || 'Starting code generation...',
+                            filePath: 'streaming.jsx',
                           }}
-                          showLineNumbers={true}
-                        >
-                          {generationProgress.streamedCode || 'Starting code generation...'}
-                        </SyntaxHighlighter>
-                        <span className="inline-block w-3 h-5 bg-orange-400 ml-1 animate-pulse" />
+                          settings={{
+                            fontSize: '14px',
+                            tabSize: 2,
+                          }}
+                        />
+                        <span className="absolute bottom-2 right-2 w-3 h-5 bg-orange-400 animate-pulse" />
                       </div>
                     </div>
                   )
@@ -1888,26 +1880,20 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                             </span>
                           </div>
                         </div>
-                        <div className="bg-gray-900 border border-gray-700 rounded">
-                          <SyntaxHighlighter
-                            language={
-                              generationProgress.currentFile.type === 'css' ? 'css' :
-                              generationProgress.currentFile.type === 'json' ? 'json' :
-                              generationProgress.currentFile.type === 'html' ? 'html' :
-                              'jsx'
-                            }
-                            style={vscDarkPlus}
-                            customStyle={{
-                              margin: 0,
-                              padding: '1rem',
-                              fontSize: '0.75rem',
-                              background: 'transparent',
+                        <div className="bg-gray-900 border border-gray-700 rounded h-[500px] relative">
+                          <CodeMirrorEditor
+                            theme="dark"
+                            editable={false}
+                            doc={{
+                              value: generationProgress.currentFile.content,
+                              filePath: generationProgress.currentFile.path,
                             }}
-                            showLineNumbers={true}
-                          >
-                            {generationProgress.currentFile.content}
-                          </SyntaxHighlighter>
-                          <span className="inline-block w-3 h-4 bg-orange-400 ml-4 mb-4 animate-pulse" />
+                            settings={{
+                              fontSize: '12px',
+                              tabSize: 2,
+                            }}
+                          />
+                          <span className="absolute bottom-2 right-2 w-3 h-4 bg-orange-400 animate-pulse" />
                         </div>
                       </div>
                     )}
@@ -1929,26 +1915,19 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                             {file.type === 'javascript' ? 'JSX' : file.type.toUpperCase()}
                           </span>
                         </div>
-                        <div className="bg-gray-900 border border-gray-700  max-h-48 overflow-y-auto scrollbar-hide">
-                          <SyntaxHighlighter
-                            language={
-                              file.type === 'css' ? 'css' :
-                              file.type === 'json' ? 'json' :
-                              file.type === 'html' ? 'html' :
-                              'jsx'
-                            }
-                            style={vscDarkPlus}
-                            customStyle={{
-                              margin: 0,
-                              padding: '1rem',
-                              fontSize: '0.75rem',
-                              background: 'transparent',
+                        <div className="bg-gray-900 border border-gray-700 h-48">
+                          <CodeMirrorEditor
+                            theme="dark"
+                            editable={false}
+                            doc={{
+                              value: file.content,
+                              filePath: file.path,
                             }}
-                            showLineNumbers={true}
-                            wrapLongLines={true}
-                          >
-                            {file.content}
-                          </SyntaxHighlighter>
+                            settings={{
+                              fontSize: '12px',
+                              tabSize: 2,
+                            }}
+                          />
                         </div>
                       </div>
                     ))}
@@ -1962,33 +1941,32 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                             <span className="font-mono text-sm">Processing...</span>
                           </div>
                         </div>
-                        <div className="bg-gray-900 border border-gray-700 rounded">
-                          <SyntaxHighlighter
-                            language="jsx"
-                            style={vscDarkPlus}
-                            customStyle={{
-                              margin: 0,
-                              padding: '1rem',
-                              fontSize: '0.75rem',
-                              background: 'transparent',
-                            }}
-                            showLineNumbers={false}
-                          >
-                            {(() => {
-                              // Show only the tail of the stream after the last file
-                              const lastFileEnd = generationProgress.files.length > 0 
-                                ? generationProgress.streamedCode.lastIndexOf('</file>') + 7
-                                : 0;
-                              let remainingContent = generationProgress.streamedCode.slice(lastFileEnd).trim();
-                              
-                              // Remove explanation tags and content
-                              remainingContent = remainingContent.replace(/<explanation>[\s\S]*?<\/explanation>/g, '').trim();
+                        <div className="bg-gray-900 border border-gray-700 rounded h-[400px]">
+                          <CodeMirrorEditor
+                            theme="dark"
+                            editable={false}
+                            doc={{
+                              value: (() => {
+                                // Show only the tail of the stream after the last file
+                                const lastFileEnd = generationProgress.files.length > 0 
+                                  ? generationProgress.streamedCode.lastIndexOf('</file>') + 7
+                                  : 0;
+                                let remainingContent = generationProgress.streamedCode.slice(lastFileEnd).trim();
+                                
+                                // Remove explanation tags and content
+                                remainingContent = remainingContent.replace(/<explanation>[\s\S]*?<\/explanation>/g, '').trim();
 
-                              // If only whitespace or nothing left, show loading message
-                              // Use "Loading sandbox..." instead of "Waiting for next file..." for better UX
-                              return remainingContent || 'Loading sandbox...';
-                            })()}
-                          </SyntaxHighlighter>
+                                // If only whitespace or nothing left, show loading message
+                                // Use "Loading sandbox..." instead of "Waiting for next file..." for better UX
+                                return remainingContent || 'Loading sandbox...';
+                              })(),
+                              filePath: 'processing.jsx',
+                            }}
+                            settings={{
+                              fontSize: '12px',
+                              tabSize: 2,
+                            }}
+                          />
                         </div>
                       </div>
                     )}
@@ -4332,28 +4310,25 @@ Focus on the key sections and content, making it clean and modern.`;
                       </div>
                       <div className="flex-1 h-px bg-gradient-to-r from-gray-300 to-transparent" />
                     </div>
-                    <div className="bg-gray-900 border border-gray-700 rounded max-h-128 overflow-y-auto scrollbar-hide">
-                      <SyntaxHighlighter
-                        language="jsx"
-                        style={vscDarkPlus}
-                        customStyle={{
-                          margin: 0,
-                          padding: '0.75rem',
-                          fontSize: '11px',
-                          lineHeight: '1.5',
-                          background: 'transparent',
-                          maxHeight: '8rem',
-                          overflow: 'hidden'
+                    <div className="bg-gray-900 border border-gray-700 rounded h-32 relative">
+                      <CodeMirrorEditor
+                        theme="dark"
+                        editable={false}
+                        doc={{
+                          value: (() => {
+                            const lastContent = generationProgress.streamedCode.slice(-1000);
+                            // Show the last part of the stream, starting from a complete tag if possible
+                            const startIndex = lastContent.indexOf('<');
+                            return startIndex !== -1 ? lastContent.slice(startIndex) : lastContent;
+                          })(),
+                          filePath: 'progress.jsx',
                         }}
-                      >
-                        {(() => {
-                          const lastContent = generationProgress.streamedCode.slice(-1000);
-                          // Show the last part of the stream, starting from a complete tag if possible
-                          const startIndex = lastContent.indexOf('<');
-                          return startIndex !== -1 ? lastContent.slice(startIndex) : lastContent;
-                        })()}
-                      </SyntaxHighlighter>
-                      <span className="inline-block w-3 h-4 bg-orange-400 ml-3 mb-3 animate-pulse" />
+                        settings={{
+                          fontSize: '11px',
+                          tabSize: 2,
+                        }}
+                      />
+                      <span className="absolute bottom-3 right-3 w-3 h-4 bg-orange-400 animate-pulse" />
                     </div>
                   </motion.div>
                 )}
