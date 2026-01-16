@@ -90,6 +90,9 @@ import {
 // TEMP: Step 2.1 - Import useSandbox hook for verification
 import { useSandbox } from './hooks/useSandbox';
 
+// TEMP: Step 2.2 - Import useCodeGeneration hook for verification
+import { useCodeGeneration } from './hooks/useCodeGeneration';
+
 // Dynamic import for Terminal component (requires browser APIs)
 const Terminal = dynamic(() => import('@/components/Terminal'), {
   ssr: false,
@@ -163,7 +166,21 @@ function AISandboxPage() {
     const initialModel = appConfig.ai.availableModels.includes(modelParam || '') ? modelParam! : appConfig.ai.defaultModel;
     setAiModel(initialModel);
   }, [searchParams, setAiModel]);
-  
+
+  // IMPORTANT: Clear chat messages immediately if this is a new session from home page
+  // This prevents showing old messages during the initial render
+  // We check for autoStart flag which indicates a fresh navigation from home page
+  const isNewSessionRef = useRef(false);
+  if (!isNewSessionRef.current && typeof window !== 'undefined') {
+    const autoStart = sessionStorage.getItem('autoStart');
+    if (autoStart === 'true') {
+      isNewSessionRef.current = true;
+      // Clear chat messages synchronously before first render
+      setChatMessages([]);
+      console.log('[generation] Cleared chat messages for new session (pre-render)');
+    }
+  }
+
   const [urlOverlayVisible, setUrlOverlayVisible] = useAtom(urlOverlayVisibleAtom);
   const [urlInput, setUrlInput] = useAtom(urlInputAtom);
   const [urlStatus, setUrlStatus] = useAtom(urlStatusAtom);
@@ -207,8 +224,13 @@ function AISandboxPage() {
   
   // TEMP: Step 2.1 - Use useSandbox hook
   const sandboxHook = useSandbox();
-  // Note: sandboxHook provides: createSandbox, checkSandboxStatus, fetchSandboxFiles, 
+  // Note: sandboxHook provides: createSandbox, checkSandboxStatus, fetchSandboxFiles,
   // refreshIframe, updateStatus, log, addChatMessage, displayStructure
+
+  // TEMP: Step 2.2 - Use useCodeGeneration hook
+  const codeGenerationHook = useCodeGeneration();
+  // Note: codeGenerationHook provides: applyGeneratedCode, captureUrlScreenshot, resetGenerationState,
+  // and various setters for generation-related state
   
   // TEMP: Step 1.3 - Replace codeApplicationState and generationProgress with atoms
   const [codeApplicationState, setCodeApplicationState] = useAtom(codeApplicationStateAtom);
@@ -376,14 +398,18 @@ function AISandboxPage() {
         sessionStorage.setItem('autoStart', 'true');
       }
       
-      // Clear old conversation
+      // Clear old conversation (both backend and frontend state)
       try {
+        // Clear backend conversation state
         await fetch('/api/conversation-state', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: 'clear-old' })
         });
         console.log('[home] Cleared old conversation data on mount');
+
+        // Note: Frontend chat messages are already cleared synchronously before render
+        // (see isNewSessionRef logic above) to prevent showing old messages
       } catch (error) {
         console.error('[ai-sandbox] Failed to clear old conversation:', error);
         if (isMounted) {
@@ -760,556 +786,10 @@ function AISandboxPage() {
     }
   };
 
+  // TEMP: Step 2.2 - Use applyGeneratedCode from useCodeGeneration hook
+  // Wrapper function to pass iframeRef to the hook's applyGeneratedCode
   const applyGeneratedCode = async (code: string, isEdit: boolean = false, overrideSandboxData?: SandboxData) => {
-    setLoading(true);
-    log('Applying AI-generated code...');
-    
-    try {
-      // Show progress component instead of individual messages
-      setCodeApplicationState({ stage: 'analyzing' });
-      
-      // Get pending packages from tool calls
-      const pendingPackages = ((window as any).pendingPackages || []).filter((pkg: any) => pkg && typeof pkg === 'string');
-      if (pendingPackages.length > 0) {
-        console.log('[applyGeneratedCode] Sending packages from tool calls:', pendingPackages);
-        // Clear pending packages after use
-        (window as any).pendingPackages = [];
-      }
-      
-      // Use streaming endpoint for real-time feedback
-      const effectiveSandboxData = overrideSandboxData || sandboxData;
-      const response = await fetch('/api/apply-ai-code-stream', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          response: code,
-          isEdit: isEdit,
-          packages: pendingPackages,
-          sandboxId: effectiveSandboxData?.sandboxId // Pass the sandbox ID to ensure proper connection
-        })
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Failed to apply code: ${response.statusText}`);
-      }
-      
-      // Handle streaming response
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-      let finalData: any = null;
-      
-      while (reader) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n');
-        
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              
-              switch (data.type) {
-                case 'start':
-                  // Don't add as chat message, just update state
-                  setCodeApplicationState({ stage: 'analyzing' });
-                  break;
-                  
-                case 'step':
-                  // Update progress state based on step
-                  if (data.message.includes('Installing') && data.packages) {
-                    setCodeApplicationState({ 
-                      stage: 'installing', 
-                      packages: data.packages 
-                    });
-                  } else if (data.message.includes('Creating files') || data.message.includes('Applying')) {
-                    setCodeApplicationState({ 
-                      stage: 'applying',
-                      filesGenerated: [] // Files will be populated when complete
-                    });
-                  }
-                  break;
-                  
-                case 'package-progress':
-                  // Handle package installation progress
-                  if (data.installedPackages) {
-                    setCodeApplicationState(prev => ({ 
-                      ...prev,
-                      installedPackages: data.installedPackages 
-                    }));
-                  }
-                  break;
-                  
-                case 'command':
-                  // Don't show npm install commands - they're handled by info messages
-                  if (data.command && !data.command.includes('npm install')) {
-                    addChatMessage(data.command, 'command', { commandType: 'input' });
-                  }
-                  break;
-                  
-                case 'success':
-                  if (data.installedPackages) {
-                    setCodeApplicationState(prev => ({ 
-                      ...prev,
-                      installedPackages: data.installedPackages 
-                    }));
-                  }
-                  break;
-                  
-                case 'file-progress':
-                  // Skip file progress messages, they're noisy
-                  break;
-                  
-                case 'file-complete':
-                  // Could add individual file completion messages if desired
-                  break;
-                  
-                case 'command-progress':
-                  addChatMessage(`${data.action} command: ${data.command}`, 'command', { commandType: 'input' });
-                  break;
-                  
-                case 'command-output':
-                  addChatMessage(data.output, 'command', { 
-                    commandType: data.stream === 'stderr' ? 'error' : 'output' 
-                  });
-                  break;
-                  
-                case 'command-complete':
-                  if (data.success) {
-                    addChatMessage(`Command completed successfully`, 'system');
-                  } else {
-                    addChatMessage(`Command failed with exit code ${data.exitCode}`, 'system');
-                  }
-                  break;
-                  
-                case 'complete':
-                  finalData = data;
-                  setCodeApplicationState({ stage: 'complete' });
-                  // Clear the state after a delay
-                  setTimeout(() => {
-                    setCodeApplicationState({ stage: null });
-                  }, 3000);
-                  // Reset loading state when complete
-                  setLoading(false);
-                  break;
-                  
-                case 'error':
-                  addChatMessage(`Error: ${data.message || data.error || 'Unknown error'}`, 'system');
-                  // Reset loading state on error
-                  setLoading(false);
-                  break;
-                  
-                case 'warning':
-                  addChatMessage(`${data.message}`, 'system');
-                  break;
-                  
-                case 'info':
-                  // Show info messages, especially for package installation
-                  if (data.message) {
-                    addChatMessage(data.message, 'system');
-                  }
-                  break;
-              }
-            } catch {
-              // Ignore parse errors
-            }
-          }
-        }
-      }
-      
-      // Process final data
-      if (finalData && finalData.type === 'complete') {
-        const data: any = {
-          success: true,
-          results: finalData.results,
-          explanation: finalData.explanation,
-          structure: finalData.structure,
-          message: finalData.message,
-          autoCompleted: finalData.autoCompleted,
-          autoCompletedComponents: finalData.autoCompletedComponents,
-          warning: finalData.warning,
-          missingImports: finalData.missingImports,
-          debug: finalData.debug
-        };
-        
-        if (data.success) {
-          const { results } = data;
-        
-        // Log package installation results without duplicate messages
-        if (results.packagesInstalled?.length > 0) {
-          log(`Packages installed: ${results.packagesInstalled.join(', ')}`);
-        }
-        
-        if (results.filesCreated?.length > 0) {
-          log('Files created:');
-          results.filesCreated.forEach((file: string) => {
-            log(`  ${file}`, 'command');
-          });
-          
-          // Verify files were actually created by refreshing the sandbox if needed
-          if (sandboxData?.sandboxId && results.filesCreated.length > 0) {
-            // Small delay to ensure files are written
-            setTimeout(() => {
-              // Force refresh the iframe to show new files
-              if (iframeRef.current) {
-                iframeRef.current.src = iframeRef.current.src;
-              }
-            }, 1000);
-          }
-        }
-        
-        if (results.filesUpdated?.length > 0) {
-          log('Files updated:');
-          results.filesUpdated.forEach((file: string) => {
-            log(`  ${file}`, 'command');
-          });
-        }
-        
-        // Update conversation context with applied code
-        setConversationContext(prev => ({
-          ...prev,
-          appliedCode: [...prev.appliedCode, {
-            files: [...(results.filesCreated || []), ...(results.filesUpdated || [])],
-            timestamp: new Date()
-          }]
-        }));
-        
-        if (results.commandsExecuted?.length > 0) {
-          log('Commands executed:');
-          results.commandsExecuted.forEach((cmd: string) => {
-            log(`  $ ${cmd}`, 'command');
-          });
-        }
-        
-        if (results.errors?.length > 0) {
-          results.errors.forEach((err: string) => {
-            log(err, 'error');
-          });
-        }
-        
-        if (data.structure) {
-          displayStructure(data.structure);
-        }
-        
-        if (data.explanation) {
-          log(data.explanation);
-        }
-        
-        if (data.autoCompleted) {
-          log('Auto-generating missing components...', 'command');
-          
-          if (data.autoCompletedComponents) {
-            setTimeout(() => {
-              log('Auto-generated missing components:', 'info');
-              data.autoCompletedComponents.forEach((comp: string) => {
-                log(`  ${comp}`, 'command');
-              });
-            }, 1000);
-          }
-        } else if (data.warning) {
-          log(data.warning, 'error');
-          
-          if (data.missingImports && data.missingImports.length > 0) {
-            const missingList = data.missingImports.join(', ');
-            addChatMessage(
-              `Ask me to "create the missing components: ${missingList}" to fix these import errors.`,
-              'system'
-            );
-          }
-        }
-        
-        log('Code applied successfully!');
-        console.log('[applyGeneratedCode] Response data:', data);
-        console.log('[applyGeneratedCode] Debug info:', data.debug);
-        console.log('[applyGeneratedCode] Current sandboxData:', sandboxData);
-        console.log('[applyGeneratedCode] Current iframe element:', iframeRef.current);
-        console.log('[applyGeneratedCode] Current iframe src:', iframeRef.current?.src);
-        
-        // Set applying code state for edits to show loading overlay
-        // Removed overlay - changes apply directly
-        
-        if (results.filesCreated?.length > 0) {
-          setConversationContext(prev => ({
-            ...prev,
-            appliedCode: [...prev.appliedCode, {
-              files: results.filesCreated,
-              timestamp: new Date()
-            }]
-          }));
-          
-          // Update the chat message to show success
-          // Only show file list if not in edit mode
-          if (isEdit) {
-            addChatMessage(`Edit applied successfully!`, 'system');
-          } else {
-            // Check if this is part of a generation flow (has recent AI recreation message)
-            const recentMessages = chatMessages.slice(-5);
-            const isPartOfGeneration = recentMessages.some(m => 
-              m.content.includes('AI recreation generated') || 
-              m.content.includes('Code generated')
-            );
-            
-            // Don't show files if part of generation flow to avoid duplication
-            if (isPartOfGeneration) {
-              addChatMessage(`Applied ${results.filesCreated.length} files successfully!`, 'system');
-            } else {
-              addChatMessage(`Applied ${results.filesCreated.length} files successfully!`, 'system', {
-                appliedFiles: results.filesCreated
-              });
-            }
-          }
-          
-          // If there are failed packages, add a message about checking for errors
-          if (results.packagesFailed?.length > 0) {
-            addChatMessage(`⚠️ Some packages failed to install. Check the error banner above for details.`, 'system');
-          }
-          
-          // Use local cache instead of full container sync (optimization)
-          // Parse file content directly from the AI response (code parameter)
-          // This ensures we have the actual content that was written to the container
-          console.log('[applyGeneratedCode] Using local cache for file sync (skipping full container fetch)');
-          
-          const allAffectedFiles = [...(results.filesCreated || []), ...(results.filesUpdated || [])];
-          
-          if (allAffectedFiles.length > 0) {
-            // Parse files directly from the AI response to get accurate content
-            const parsedFiles: Record<string, string> = {};
-            const fileRegex = /<file path="([^"]+)">([\s\S]*?)<\/file>/g;
-            let match;
-            while ((match = fileRegex.exec(code)) !== null) {
-              let filePath = match[1];
-              let fileContent = match[2].trim();
-              
-              // Apply the same path normalization as the backend
-              if (filePath.startsWith('/')) {
-                filePath = filePath.substring(1);
-              }
-              const configFiles = ['tailwind.config.js', 'vite.config.js', 'package.json', 'package-lock.json', 'tsconfig.json', 'postcss.config.js'];
-              if (!filePath.startsWith('src/') &&
-                  !filePath.startsWith('public/') &&
-                  filePath !== 'index.html' &&
-                  !configFiles.includes(filePath.split('/').pop() || '')) {
-                filePath = 'src/' + filePath;
-              }
-              
-              // Apply the same content transformations as the backend
-              if (filePath.endsWith('.jsx') || filePath.endsWith('.js') || filePath.endsWith('.tsx') || filePath.endsWith('.ts')) {
-                fileContent = fileContent.replace(/import\s+['"]\.\/[^'"]+\.css['"];?\s*\n?/g, '');
-              }
-              if (filePath.endsWith('.css')) {
-                fileContent = fileContent.replace(/shadow-3xl/g, 'shadow-2xl');
-                fileContent = fileContent.replace(/shadow-4xl/g, 'shadow-2xl');
-                fileContent = fileContent.replace(/shadow-5xl/g, 'shadow-2xl');
-              }
-              
-              parsedFiles[filePath] = fileContent;
-            }
-            
-            // Update sandboxFiles with parsed content
-            const updatedSandboxFiles: Record<string, string> = { ...sandboxFiles };
-            for (const [path, content] of Object.entries(parsedFiles)) {
-              updatedSandboxFiles[path] = content;
-            }
-            
-            // If packages were installed, fetch updated package.json from container
-            // because npm modifies it and our local cache doesn't have those changes
-            const packagesInstalled = results?.packagesInstalled?.length > 0;
-            if (packagesInstalled) {
-              console.log('[applyGeneratedCode] Packages installed, fetching updated package.json from container...');
-              try {
-                const pkgResponse = await fetch('/api/read-sandbox-file', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ path: 'package.json' })
-                });
-                const pkgData = await pkgResponse.json();
-                if (pkgData.success && pkgData.content) {
-                  updatedSandboxFiles['package.json'] = pkgData.content;
-                  console.log('[applyGeneratedCode] Updated package.json from container');
-                }
-              } catch (err) {
-                console.warn('[applyGeneratedCode] Could not fetch package.json:', err);
-              }
-            }
-            
-            setSandboxFiles(updatedSandboxFiles);
-            console.log('[applyGeneratedCode] Updated sandboxFiles from parsed AI response:', Object.keys(parsedFiles).length, 'new files,', Object.keys(updatedSandboxFiles).length, 'total files');
-            
-            // Update generationProgress.files with the correct paths and content
-            const progressFiles = Object.entries(updatedSandboxFiles).map(([path, content]) => {
-              const ext = path.split('.').pop()?.toLowerCase() || '';
-              let type = 'utility';
-              if (['tsx', 'jsx'].includes(ext)) type = 'component';
-              else if (ext === 'css') type = 'style';
-              else if (ext === 'json') type = 'config';
-              
-              return { path, content, type, completed: true };
-            });
-            
-            setGenerationProgress(prev => ({
-              ...prev,
-              files: progressFiles,
-              status: 'Files applied from local cache'
-            }));
-          } else {
-            // Fallback: if no files affected, do a quick container sync
-            console.log('[applyGeneratedCode] No files affected, falling back to container sync...');
-            try {
-              const response = await fetch('/api/get-sandbox-files');
-              const data = await response.json();
-              if (data.success && data.files) {
-                setSandboxFiles(data.files);
-                
-                const progressFiles = Object.entries(data.files).map(([path, content]) => {
-                  const ext = path.split('.').pop()?.toLowerCase() || '';
-                  let type = 'utility';
-                  if (['tsx', 'jsx'].includes(ext)) type = 'component';
-                  else if (ext === 'css') type = 'style';
-                  else if (ext === 'json') type = 'config';
-                  
-                  return { path, content: content as string, type, completed: true };
-                });
-                
-                setGenerationProgress(prev => ({ ...prev, files: progressFiles, status: 'Files synced from container' }));
-              }
-            } catch (error) {
-              console.error('[applyGeneratedCode] Error syncing files:', error);
-            }
-          }
-          
-          // Skip automatic package check - it's not needed here and can cause false "no sandbox" messages
-          // Packages are already installed during the apply-ai-code-stream process
-          
-          // Test build to ensure everything compiles correctly
-          // Skip build test for now - it's causing errors with undefined activeSandbox
-          // The build test was trying to access global.activeSandbox from the frontend,
-          // but that's only available in the backend API routes
-          console.log('[build-test] Skipping build test - would need API endpoint');
-          
-          // Force iframe refresh after applying code
-          const refreshDelay = appConfig.codeApplication.defaultRefreshDelay; // Allow Vite to process changes
-          
-          setTimeout(() => {
-            const currentSandboxData = effectiveSandboxData;
-            if (iframeRef.current && currentSandboxData?.url) {
-              console.log('[home] Refreshing iframe after code application...');
-              
-              // Method 1: Change src with timestamp
-              const urlWithTimestamp = `${currentSandboxData.url}?t=${Date.now()}&applied=true`;
-              iframeRef.current.src = urlWithTimestamp;
-              
-              // Method 2: Force reload after a short delay
-              setTimeout(() => {
-                try {
-                  if (iframeRef.current?.contentWindow) {
-                    iframeRef.current.contentWindow.location.reload();
-                    console.log('[home] Force reloaded iframe content');
-                  }
-                } catch (e) {
-                  console.log('[home] Could not reload iframe (cross-origin):', e);
-                }
-                // Reload completed
-              }, 1000);
-            }
-          }, refreshDelay);
-          
-          // Vite error checking removed - handled by template setup
-        }
-        
-          // Give Vite HMR a moment to detect changes, then ensure refresh
-          const currentSandboxData = effectiveSandboxData;
-          if (iframeRef.current && currentSandboxData?.url) {
-            // Wait for Vite to process the file changes
-            // If packages were installed, wait longer for Vite to restart
-            const packagesInstalled = results?.packagesInstalled?.length > 0 || data.results?.packagesInstalled?.length > 0;
-            const refreshDelay = packagesInstalled ? appConfig.codeApplication.packageInstallRefreshDelay : appConfig.codeApplication.defaultRefreshDelay;
-            console.log(`[applyGeneratedCode] Packages installed: ${packagesInstalled}, refresh delay: ${refreshDelay}ms`);
-            
-            setTimeout(async () => {
-            if (iframeRef.current && currentSandboxData?.url) {
-              console.log('[applyGeneratedCode] Starting iframe refresh sequence...');
-              console.log('[applyGeneratedCode] Current iframe src:', iframeRef.current.src);
-              console.log('[applyGeneratedCode] Sandbox URL:', currentSandboxData.url);
-              
-              // Method 1: Try direct navigation first
-              try {
-                const urlWithTimestamp = `${currentSandboxData.url}?t=${Date.now()}&force=true`;
-                console.log('[applyGeneratedCode] Attempting direct navigation to:', urlWithTimestamp);
-                
-                // Remove any existing onload handler
-                iframeRef.current.onload = null;
-                
-                // Navigate directly
-                iframeRef.current.src = urlWithTimestamp;
-                
-                // Wait a bit and check if it loaded
-                await new Promise(resolve => setTimeout(resolve, 2000));
-                
-                // Try to access the iframe content to verify it loaded
-                try {
-                  const iframeDoc = iframeRef.current.contentDocument || iframeRef.current.contentWindow?.document;
-                  if (iframeDoc && iframeDoc.readyState === 'complete') {
-                    console.log('[applyGeneratedCode] Iframe loaded successfully');
-                    return;
-                  }
-                } catch {
-                  console.log('[applyGeneratedCode] Cannot access iframe content (CORS), assuming loaded');
-                  return;
-                }
-              } catch (e) {
-                console.error('[applyGeneratedCode] Direct navigation failed:', e);
-              }
-              
-              // Method 2: Force complete iframe recreation if direct navigation failed
-              console.log('[applyGeneratedCode] Falling back to iframe recreation...');
-              const parent = iframeRef.current.parentElement;
-              const newIframe = document.createElement('iframe');
-              
-              // Copy attributes
-              newIframe.className = iframeRef.current.className;
-              newIframe.title = iframeRef.current.title;
-              newIframe.allow = iframeRef.current.allow;
-              // Copy sandbox attributes
-              const sandboxValue = iframeRef.current.getAttribute('sandbox');
-              if (sandboxValue) {
-                newIframe.setAttribute('sandbox', sandboxValue);
-              }
-              
-              // Remove old iframe
-              iframeRef.current.remove();
-              
-              // Add new iframe
-              newIframe.src = `${currentSandboxData.url}?t=${Date.now()}&recreated=true`;
-              parent?.appendChild(newIframe);
-              
-              // Update ref
-              (iframeRef as any).current = newIframe;
-              
-              console.log('[applyGeneratedCode] Iframe recreated with new content');
-            } else {
-              console.error('[applyGeneratedCode] No iframe or sandbox URL available for refresh');
-            }
-          }, refreshDelay); // Dynamic delay based on whether packages were installed
-        }
-        
-        } else {
-          throw new Error(finalData?.error || 'Failed to apply code');
-        }
-      } else {
-        // If no final data was received, still close loading
-        addChatMessage('Code application may have partially succeeded. Check the preview.', 'system');
-      }
-    } catch (error: any) {
-      log(`Failed to apply code: ${error.message}`, 'error');
-    } finally {
-      setLoading(false);
-      // Clear isEdit flag after applying code
-      setGenerationProgress(prev => ({
-        ...prev,
-        isEdit: false
-      }));
-    }
+    return codeGenerationHook.applyGeneratedCode(code, isEdit, overrideSandboxData, iframeRef);
   };
 
   const renderMainContent = () => {
@@ -2492,7 +1972,6 @@ function AISandboxPage() {
     }
   };
 
-//   const clearChatHistory = () => {
 //     setChatMessages([{
 //       content: 'Chat history cleared. How can I help you?',
 //       type: 'system',
@@ -2833,39 +2312,8 @@ function AISandboxPage() {
 //     }
 //   };
 
-  const captureUrlScreenshot = async (url: string) => {
-    setIsCapturingScreenshot(true);
-    setScreenshotError(null);
-    try {
-      const response = await fetch('/api/scrape-screenshot', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url })
-      });
-      
-      const data = await response.json();
-      if (data.success && data.screenshot) {
-        setIsScreenshotLoaded(false); // Reset loaded state for new screenshot
-        setUrlScreenshot(data.screenshot);
-        // Set preparing design state
-        setIsPreparingDesign(true);
-        // Store the clean URL for display
-        const cleanUrl = url.replace(/^https?:\/\//i, '');
-        setTargetUrl(cleanUrl);
-        // Switch to preview tab to show the screenshot
-        if (activeTab !== 'preview') {
-          setActiveTab('preview');
-        }
-      } else {
-        setScreenshotError(data.error || 'Failed to capture screenshot');
-      }
-    } catch (error) {
-      console.error('Failed to capture screenshot:', error);
-      setScreenshotError('Network error while capturing screenshot');
-    } finally {
-      setIsCapturingScreenshot(false);
-    }
-  };
+  // TEMP: Step 2.2 - Use captureUrlScreenshot from useCodeGeneration hook
+  const captureUrlScreenshot = codeGenerationHook.captureUrlScreenshot;
 
   const handleHomeScreenSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
