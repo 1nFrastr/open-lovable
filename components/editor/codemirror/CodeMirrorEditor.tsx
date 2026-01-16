@@ -104,6 +104,7 @@ export const CodeMirrorEditor = memo(
 
     /**
      * Auto-scroll to bottom when content changes (for streaming code)
+     * This scrolls the CodeMirror editor itself, not the outer container
      */
     useEffect(() => {
       if (!viewRef.current || !doc || editable) {
@@ -115,11 +116,26 @@ export const CodeMirrorEditor = memo(
       const docLength = view.state.doc.length;
       
       if (docLength > 0) {
-        requestAnimationFrame(() => {
-          view.dispatch({
-            effects: EditorView.scrollIntoView(docLength, { y: 'end', yMargin: 0 }),
-          });
-        });
+        // Use setTimeout to ensure the DOM has updated
+        const timeoutId = setTimeout(() => {
+          try {
+            // Scroll to the last character in the document
+            view.dispatch({
+              effects: EditorView.scrollIntoView(docLength, { 
+                y: 'end',
+                yMargin: 0 
+              }),
+            });
+            
+            // Also directly scroll the DOM element to ensure it works
+            const scrollDOM = view.scrollDOM;
+            scrollDOM.scrollTop = scrollDOM.scrollHeight;
+          } catch (error) {
+            console.error('Error scrolling CodeMirror:', error);
+          }
+        }, 50);
+
+        return () => clearTimeout(timeoutId);
       }
     }, [doc?.value, editable]);
 

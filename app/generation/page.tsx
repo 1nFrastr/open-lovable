@@ -2705,11 +2705,15 @@ Tip: I automatically detect and install npm packages from your code imports (lik
   };
 
   // Auto-scroll code display to bottom when streaming
+  // This scrolls the outer container to show the latest card
   useEffect(() => {
     if (codeDisplayRef.current && generationProgress.isStreaming) {
       codeDisplayRef.current.scrollTop = codeDisplayRef.current.scrollHeight;
     }
-  }, [generationProgress.streamedCode, generationProgress.isStreaming]);
+  }, [generationProgress.files.length, generationProgress.isStreaming]);
+  
+  // Note: Individual CodeMirror editors handle their own internal scrolling
+  // via the autoScroll prop when content changes
 
   const toggleFolder = (folderPath: string) => {
     const newExpanded = new Set(expandedFolders);
