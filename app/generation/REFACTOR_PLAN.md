@@ -276,7 +276,7 @@ const { applyGeneratedCode, captureUrlScreenshot } = useCodeGeneration();
 -  `sandboxFiles` 缓存更新逻辑正确
 
 
-#### Step 2.3: 验证 `useChatMessages` hook
+#### Step 2.3: 验证 `useChatMessages` hook ✅
 
 **关键函数对比**:
 | 原始函数 | Hook 函数 | 状态 |
