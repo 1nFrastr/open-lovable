@@ -2,6 +2,7 @@
 
 import { useCallback } from 'react';
 import { useAtom, useSetAtom, useAtomValue } from 'jotai';
+import { appConfig } from '@/config/app.config';
 import {
   generationProgressAtom,
   codeApplicationStateAtom,
@@ -21,11 +22,12 @@ import {
 import {
   sandboxDataAtom,
   sandboxFilesAtom,
+  sandboxLoadingAtom,
   responseAreaAtom,
+  structureContentAtom,
   type SandboxData,
 } from '../atoms/sandbox';
 import { conversationContextAtom, chatMessagesAtom, type ChatMessage } from '../atoms/chat';
-import { activeTabAtom } from '../atoms/ui';
 
 export function useCodeGeneration() {
   const [generationProgress, setGenerationProgress] = useAtom(generationProgressAtom);
@@ -42,13 +44,22 @@ export function useCodeGeneration() {
   const setHasInitialSubmission = useSetAtom(hasInitialSubmissionAtom);
   const setShouldAutoGenerate = useSetAtom(shouldAutoGenerateAtom);
   const setPendingAutoSendMessage = useSetAtom(pendingAutoSendMessageAtom);
-  
+
   const sandboxData = useAtomValue(sandboxDataAtom);
   const [sandboxFiles, setSandboxFiles] = useAtom(sandboxFilesAtom);
-  const [conversationContext, setConversationContext] = useAtom(conversationContextAtom);
+  const [, setLoading] = useAtom(sandboxLoadingAtom);
+  const [, setConversationContext] = useAtom(conversationContextAtom);
   const [chatMessages, setChatMessages] = useAtom(chatMessagesAtom);
-  const [responseArea, setResponseArea] = useAtom(responseAreaAtom);
-  const setActiveTab = useSetAtom(activeTabAtom);
+  const [, setResponseArea] = useAtom(responseAreaAtom);
+  const setStructureContent = useSetAtom(structureContentAtom);
+
+  const displayStructure = useCallback((structure: any) => {
+    if (typeof structure === 'object') {
+      setStructureContent(JSON.stringify(structure, null, 2));
+    } else {
+      setStructureContent(structure || 'No structure available');
+    }
+  }, [setStructureContent]);
 
   const log = useCallback((message: string, type: 'info' | 'error' | 'command' = 'info') => {
     setResponseArea(prev => [...prev, `[${type}] ${message}`]);
@@ -108,8 +119,10 @@ export function useCodeGeneration() {
   const applyGeneratedCode = useCallback(async (
     code: string,
     isEdit: boolean = false,
-    overrideSandboxData?: SandboxData
+    overrideSandboxData?: SandboxData,
+    iframeRef?: React.RefObject<HTMLIFrameElement | null>
   ) => {
+    setLoading(true);
     log('Applying AI-generated code...');
 
     try {
@@ -221,10 +234,12 @@ export function useCodeGeneration() {
                   setTimeout(() => {
                     setCodeApplicationState({ stage: null });
                   }, 3000);
+                  setLoading(false);
                   break;
 
                 case 'error':
                   addChatMessage(`Error: ${data.message || data.error || 'Unknown error'}`, 'system');
+                  setLoading(false);
                   break;
 
                 case 'warning':
@@ -271,6 +286,15 @@ export function useCodeGeneration() {
             results.filesCreated.forEach((file: string) => {
               log(`  ${file}`, 'command');
             });
+
+            // Force refresh the iframe after files are created
+            if (effectiveSandboxData?.sandboxId && results.filesCreated.length > 0 && iframeRef?.current) {
+              setTimeout(() => {
+                if (iframeRef.current) {
+                  iframeRef.current.src = iframeRef.current.src;
+                }
+              }, 1000);
+            }
           }
 
           if (results.filesUpdated?.length > 0) {
@@ -302,61 +326,193 @@ export function useCodeGeneration() {
             });
           }
 
+          if (resultData.structure) {
+            displayStructure(resultData.structure);
+          }
+
           if (resultData.explanation) {
             log(resultData.explanation);
+          }
+
+          if (resultData.autoCompleted) {
+            log('Auto-generating missing components...', 'command');
+            if (resultData.autoCompletedComponents) {
+              setTimeout(() => {
+                log('Auto-generated missing components:', 'info');
+                resultData.autoCompletedComponents.forEach((comp: string) => {
+                  log(`  ${comp}`, 'command');
+                });
+              }, 1000);
+            }
+          } else if (resultData.warning) {
+            log(resultData.warning, 'error');
+            if (resultData.missingImports && resultData.missingImports.length > 0) {
+              const missingList = resultData.missingImports.join(', ');
+              addChatMessage(
+                `Ask me to "create the missing components: ${missingList}" to fix these import errors.`,
+                'system'
+              );
+            }
           }
 
           log('Code applied successfully!');
 
           // Show file list
           if (results.filesCreated?.length > 0) {
+            setConversationContext(prev => ({
+              ...prev,
+              appliedCode: [...prev.appliedCode, {
+                files: results.filesCreated,
+                timestamp: new Date()
+              }]
+            }));
+
             if (isEdit) {
               addChatMessage(`Edit applied successfully!`, 'system');
             } else {
-              addChatMessage(`Applied ${results.filesCreated.length} files successfully!`, 'system', {
-                appliedFiles: results.filesCreated
+              const recentMessages = chatMessages.slice(-5);
+              const isPartOfGeneration = recentMessages.some(m =>
+                m.content.includes('AI recreation generated') ||
+                m.content.includes('Code generated')
+              );
+
+              if (isPartOfGeneration) {
+                addChatMessage(`Applied ${results.filesCreated.length} files successfully!`, 'system');
+              } else {
+                addChatMessage(`Applied ${results.filesCreated.length} files successfully!`, 'system', {
+                  appliedFiles: results.filesCreated
+                });
+              }
+            }
+
+            if (results.packagesFailed?.length > 0) {
+              addChatMessage(`Some packages failed to install. Check the error banner above for details.`, 'system');
+            }
+
+            // Update local file cache
+            const allAffectedFiles = [...(results.filesCreated || []), ...(results.filesUpdated || [])];
+
+            if (allAffectedFiles.length > 0) {
+              const parsedFiles: Record<string, string> = {};
+              const fileRegex = /<file path="([^"]+)">([\s\S]*?)<\/file>/g;
+              let match;
+              while ((match = fileRegex.exec(code)) !== null) {
+                let filePath = match[1];
+                let fileContent = match[2].trim();
+
+                if (filePath.startsWith('/')) {
+                  filePath = filePath.substring(1);
+                }
+                const configFiles = ['tailwind.config.js', 'vite.config.js', 'package.json', 'package-lock.json', 'tsconfig.json', 'postcss.config.js'];
+                if (!filePath.startsWith('src/') &&
+                    !filePath.startsWith('public/') &&
+                    filePath !== 'index.html' &&
+                    !configFiles.includes(filePath.split('/').pop() || '')) {
+                  filePath = 'src/' + filePath;
+                }
+
+                // Apply content transformations
+                if (filePath.endsWith('.jsx') || filePath.endsWith('.js') || filePath.endsWith('.tsx') || filePath.endsWith('.ts')) {
+                  fileContent = fileContent.replace(/import\s+['"]\.\/[^'"]+\.css['"];?\s*\n?/g, '');
+                }
+                if (filePath.endsWith('.css')) {
+                  fileContent = fileContent.replace(/shadow-3xl/g, 'shadow-2xl');
+                  fileContent = fileContent.replace(/shadow-4xl/g, 'shadow-2xl');
+                  fileContent = fileContent.replace(/shadow-5xl/g, 'shadow-2xl');
+                }
+
+                parsedFiles[filePath] = fileContent;
+              }
+
+              // Update sandboxFiles with parsed content
+              const updatedSandboxFiles: Record<string, string> = { ...sandboxFiles, ...parsedFiles };
+
+              // If packages were installed, fetch updated package.json from container
+              const packagesInstalled = results?.packagesInstalled?.length > 0;
+              if (packagesInstalled) {
+                console.log('[applyGeneratedCode] Packages installed, fetching updated package.json from container...');
+                try {
+                  const pkgResponse = await fetch('/api/read-sandbox-file', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: 'package.json' })
+                  });
+                  const pkgData = await pkgResponse.json();
+                  if (pkgData.success && pkgData.content) {
+                    updatedSandboxFiles['package.json'] = pkgData.content;
+                    console.log('[applyGeneratedCode] Updated package.json from container');
+                  }
+                } catch (err) {
+                  console.warn('[applyGeneratedCode] Could not fetch package.json:', err);
+                }
+              }
+
+              setSandboxFiles(updatedSandboxFiles);
+              console.log('[applyGeneratedCode] Updated sandboxFiles:', Object.keys(parsedFiles).length, 'new files');
+
+              // Update generationProgress.files
+              const progressFiles = Object.entries(updatedSandboxFiles).map(([path, content]) => {
+                const ext = path.split('.').pop()?.toLowerCase() || '';
+                let type = 'utility';
+                if (['tsx', 'jsx'].includes(ext)) type = 'component';
+                else if (ext === 'css') type = 'style';
+                else if (ext === 'json') type = 'config';
+
+                return { path, content, type, completed: true };
               });
-            }
-          }
 
-          // Update local file cache
-          const allAffectedFiles = [...(results.filesCreated || []), ...(results.filesUpdated || [])];
-          if (allAffectedFiles.length > 0) {
-            const parsedFiles: Record<string, string> = {};
-            const fileRegex = /<file path="([^"]+)">([\s\S]*?)<\/file>/g;
-            let match;
-            while ((match = fileRegex.exec(code)) !== null) {
-              let filePath = match[1];
-              let fileContent = match[2].trim();
-
-              if (filePath.startsWith('/')) {
-                filePath = filePath.substring(1);
-              }
-              const configFiles = ['tailwind.config.js', 'vite.config.js', 'package.json', 'package-lock.json', 'tsconfig.json', 'postcss.config.js'];
-              if (!filePath.startsWith('src/') &&
-                  !filePath.startsWith('public/') &&
-                  !configFiles.includes(filePath)) {
-                filePath = `src/${filePath}`;
-              }
-              parsedFiles[filePath] = fileContent;
+              setGenerationProgress(prev => ({
+                ...prev,
+                files: progressFiles,
+                status: 'Files applied from local cache'
+              }));
             }
 
-            setSandboxFiles(prev => ({ ...prev, ...parsedFiles }));
+            // Force iframe refresh after applying code
+            if (iframeRef?.current && effectiveSandboxData?.url) {
+              const packagesInstalled = results?.packagesInstalled?.length > 0;
+              const refreshDelay = packagesInstalled
+                ? appConfig.codeApplication.packageInstallRefreshDelay
+                : appConfig.codeApplication.defaultRefreshDelay;
+
+              setTimeout(() => {
+                if (iframeRef.current && effectiveSandboxData?.url) {
+                  console.log('[applyGeneratedCode] Refreshing iframe...');
+                  const urlWithTimestamp = `${effectiveSandboxData.url}?t=${Date.now()}&force=true`;
+                  iframeRef.current.src = urlWithTimestamp;
+                }
+              }, refreshDelay);
+            }
           }
+        } else {
+          throw new Error(finalData?.error || 'Failed to apply code');
         }
+      } else {
+        addChatMessage('Code application may have partially succeeded. Check the preview.', 'system');
       }
     } catch (error: any) {
-      console.error('[applyGeneratedCode] Error:', error);
+      log(`Failed to apply code: ${error.message}`, 'error');
       addChatMessage(`Failed to apply code: ${error.message}`, 'error');
       setCodeApplicationState({ stage: null });
+    } finally {
+      setLoading(false);
+      setGenerationProgress(prev => ({
+        ...prev,
+        isEdit: false
+      }));
     }
   }, [
     sandboxData,
+    sandboxFiles,
+    chatMessages,
     log,
     addChatMessage,
+    displayStructure,
+    setLoading,
     setCodeApplicationState,
     setConversationContext,
-    setSandboxFiles
+    setSandboxFiles,
+    setGenerationProgress
   ]);
 
   const resetGenerationState = useCallback(() => {

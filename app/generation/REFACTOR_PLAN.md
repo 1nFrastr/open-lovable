@@ -148,7 +148,7 @@ app/generation/
 
 ---
 
-## ✅ 阶段 1 完成总结
+ ✅ 阶段 1 完成总结
 
 **已完成的工作**:
 1. ✅ 验证了所有 4 个 atom 文件的类型定义
@@ -244,13 +244,13 @@ const { createSandbox, fetchSandboxFiles } = useSandbox();
 - ✅ `fetchSandboxFiles` 正确更新 `generationProgress.files`
 - ✅ `router.push` 和 `searchParams` 正确传递
 
-#### Step 2.2: 验证 `useCodeGeneration` hook ✅
+#### Step 2.2: 验证 `useCodeGeneration` hook 
 
 **关键函数对比**:
 | 原始函数 | Hook 函数 | 状态 |
 |---------|----------|------|
-| `applyGeneratedCode()` | `useCodeGeneration().applyGeneratedCode()` | ✅ 已验证 |
-| `captureUrlScreenshot()` | `useCodeGeneration().captureUrlScreenshot()` | ✅ 已验证 |
+| `applyGeneratedCode()` | `useCodeGeneration().applyGeneratedCode()` |  已验证 |
+| `captureUrlScreenshot()` | `useCodeGeneration().captureUrlScreenshot()` |  已验证 |
 
 **Hook 提供的功能**:
 - `captureUrlScreenshot()` - URL 截图捕获
@@ -258,10 +258,10 @@ const { createSandbox, fetchSandboxFiles } = useSandbox();
 - 所有 generation 相关的状态管理
 
 **验证结果**:
-- ✅ TypeScript 编译通过
-- ✅ 所有函数签名匹配原始代码
-- ✅ SSE 流式响应处理正确
-- ✅ `codeApplicationState` 状态更新正确
+-  TypeScript 编译通过
+-  所有函数签名匹配原始代码
+-  SSE 流式响应处理正确
+-  `codeApplicationState` 状态更新正确
 
 **测试方法**:
 ```tsx
@@ -271,33 +271,33 @@ const { applyGeneratedCode, captureUrlScreenshot } = useCodeGeneration();
 ```
 
 **注意事项**:
-- ✅ `applyGeneratedCode` 正确处理 SSE 流式响应
-- ✅ 正确更新 `codeApplicationState` 各阶段
-- ✅ `sandboxFiles` 缓存更新逻辑正确
+-  `applyGeneratedCode` 正确处理 SSE 流式响应
+-  正确更新 `codeApplicationState` 各阶段
+-  `sandboxFiles` 缓存更新逻辑正确
 
-#### Step 2.3: 验证 `useChatMessages` hook ✅
-
-**验证结果**:
-- ✅ Hook 已定义，提供聊天消息管理功能
-- ✅ 与 `chatMessagesAtom` 正确集成
-- ✅ 消息添加、清除功能正常
-
-#### Step 2.4: 验证 `useInitialization` hook ✅
+#### Step 2.3: 验证 `useChatMessages` hook 
 
 **验证结果**:
-- ✅ Hook 已定义，提供初始化逻辑
-- ✅ 处理 sandbox 恢复和创建
-- ✅ 处理 URL 参数和模板模式
+-  Hook 已定义，提供聊天消息管理功能
+-  与 `chatMessagesAtom` 正确集成
+-  消息添加、清除功能正常
+
+#### Step 2.4: 验证 `useInitialization` hook 
+
+**验证结果**:
+-  Hook 已定义，提供初始化逻辑
+-  处理 sandbox 恢复和创建
+-  处理 URL 参数和模板模式
 
 ---
 
-## ✅ 阶段 2 完成总结
+##  阶段 2 完成总结
 
 **已完成的工作**:
-1. ✅ 验证了 `useSandbox` hook - 8 个核心函数
-2. ✅ 验证了 `useCodeGeneration` hook - 代码生成和应用
-3. ✅ 验证了 `useChatMessages` hook - 聊天消息管理
-4. ✅ 验证了 `useInitialization` hook - 初始化逻辑
+1.  验证了 `useSandbox` hook - 8 个核心函数
+2.  验证了 `useCodeGeneration` hook - 代码生成和应用
+3.  验证了 `useChatMessages` hook - 聊天消息管理
+4.  验证了 `useInitialization` hook - 初始化逻辑
 
 **修改的代码**:
 - 在 `page.tsx` 中导入并使用 `useSandbox` hook
@@ -305,10 +305,10 @@ const { applyGeneratedCode, captureUrlScreenshot } = useCodeGeneration();
 - 使用 hook 提供的函数替代原始实现
 
 **验证结果**:
-- ✅ TypeScript 编译通过
-- ✅ 开发服务器正常运行 (http://localhost:3002)
-- ✅ 所有 hook 函数签名匹配原始代码
-- ✅ 状态管理通过 Jotai atoms 正确实现
+-  TypeScript 编译通过
+-  开发服务器正常运行 (http://localhost:3002)
+-  所有 hook 函数签名匹配原始代码
+-  状态管理通过 Jotai atoms 正确实现
 
 **下一步**: 阶段 3 - Components 验证
 
