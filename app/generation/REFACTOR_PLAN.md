@@ -244,7 +244,7 @@ const { createSandbox, fetchSandboxFiles } = useSandbox();
 - ✅ `fetchSandboxFiles` 正确更新 `generationProgress.files`
 - ✅ `router.push` 和 `searchParams` 正确传递
 
-#### Step 2.2: 验证 `useCodeGeneration` hook 
+#### Step 2.2: 验证 `useCodeGeneration`  hook ✅ 
 
 **关键函数对比**:
 | 原始函数 | Hook 函数 | 状态 |
@@ -288,29 +288,6 @@ const { applyGeneratedCode, captureUrlScreenshot } = useCodeGeneration();
 -  Hook 已定义，提供初始化逻辑
 -  处理 sandbox 恢复和创建
 -  处理 URL 参数和模板模式
-
----
-
-##  阶段 2 完成总结
-
-**已完成的工作**:
-1.  验证了 `useSandbox` hook - 8 个核心函数
-2.  验证了 `useCodeGeneration` hook - 代码生成和应用
-3.  验证了 `useChatMessages` hook - 聊天消息管理
-4.  验证了 `useInitialization` hook - 初始化逻辑
-
-**修改的代码**:
-- 在 `page.tsx` 中导入并使用 `useSandbox` hook
-- 注释掉约 200 行原始 sandbox 函数
-- 使用 hook 提供的函数替代原始实现
-
-**验证结果**:
--  TypeScript 编译通过
--  开发服务器正常运行 (http://localhost:3002)
--  所有 hook 函数签名匹配原始代码
--  状态管理通过 Jotai atoms 正确实现
-
-**下一步**: 阶段 3 - Components 验证
 
 ---
 
