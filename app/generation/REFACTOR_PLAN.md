@@ -379,10 +379,26 @@ useInitialization({
 - ✅ 集成了所有必要的 atoms 和组件
 - ✅ 支持完整的消息类型和元数据显示
 
-#### Step 3.3: 验证 `FileTreePanel` 组件
-- [ ] 文件树渲染
-- [ ] 文件夹展开/折叠
-- [ ] 文件选择
+#### Step 3.3: 验证 `FileTreePanel` 组件 ✅
+- [x] 文件树渲染 - 第 177-199 行实现完整文件树组件
+- [x] 文件夹展开/折叠 - 第 112-175 行 FileTreeItem 组件处理折叠逻辑
+- [x] 文件选择 - 第 113-125 行通过 selectedFileAtom 处理选择
+- [x] 文件图标显示 - 第 27-44 行 getFileIcon 函数支持多种文件类型
+- [x] 编辑标记 - 第 158-162 行显示编辑过的文件标记
+- [x] 递归文件树构建 - 第 46-105 行 buildFileTree 函数
+
+**已完成的集成**:
+1. 在 `page.tsx` 第 109 行导入 `FileTreePanel` 组件
+2. 在 `page.tsx` 第 603-605 行使用 `<FileTreePanel />` 替换原始文件树渲染逻辑
+3. 移除了 `page.tsx` 中不再需要的 `toggleFolder` 和 `handleFileClick` 函数
+4. 保留了 `getFileIcon` 函数用于代码编辑器头部显示(第 649 行)
+5. 旧的文件树代码(约100行)已被3行的组件调用替换
+
+**验证结果**: 
+- ✅ TypeScript 编译通过
+- ✅ 所有功能点都已实现
+- ✅ 与 generationProgressAtom, selectedFileAtom, expandedFoldersAtom 正确集成
+- ✅ 支持完整的文件树展示,包括文件夹、文件、图标和编辑标记
 
 #### Step 3.4: 验证 `CodeEditorPanel` 组件
 - [ ] CodeMirror 编辑器渲染
@@ -506,7 +522,7 @@ console.log('[DEBUG] generationProgress:', generationProgress);
 | 2.4 Hook - useInitialization | ✅ 已完成 | - | 已集成到 page.tsx |
 | 3.1 Component - PreviewPane | ✅ 已完成 | - | 已集成，所有功能验证通过 |
 | 3.2 Component - ChatPanel | ✅ 已完成 | - | 已增强并集成，支持完整功能 |
-| 3.3 Component - FileTreePanel | 待开始 | - | - |
+| 3.3 Component - FileTreePanel | ✅ 已完成 | - | 已集成，支持文件树、折叠、选择 |
 | 3.4 Component - CodeEditorPanel | 待开始 | - | - |
 | 4.1 集成测试 - 基础流程 | 待开始 | - | - |
 | 4.2 集成测试 - Template | 待开始 | - | - |
