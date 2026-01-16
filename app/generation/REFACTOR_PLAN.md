@@ -400,10 +400,30 @@ useInitialization({
 - ✅ 与 generationProgressAtom, selectedFileAtom, expandedFoldersAtom 正确集成
 - ✅ 支持完整的文件树展示,包括文件夹、文件、图标和编辑标记
 
-#### Step 3.4: 验证 `CodeEditorPanel` 组件
-- [ ] CodeMirror 编辑器渲染
-- [ ] 文件内容显示
-- [ ] 流式代码显示
+#### Step 3.4: 验证 `CodeEditorPanel` 组件 ✅
+- [x] CodeMirror 编辑器渲染 - 使用 CodeMirrorEditor 组件，支持深色主题
+- [x] 文件内容显示 - 正确显示选中文件内容，带文件图标和修改标记
+- [x] 流式代码显示 - 支持实时显示 AI 生成的代码流
+- [x] Thinking 模式显示 - 显示 AI 思考过程和时长
+- [x] 空状态显示 - 无选中文件时显示友好的提示
+- [x] 流式生成状态 - 显示当前正在生成的文件（带动画）
+
+**已完成的集成**:
+1. 在 `page.tsx` 第 111-112 行导入 `CodeEditorPanel` 组件
+2. 在 `page.tsx` 第 643-647 行使用 `<CodeEditorPanel />` 替换原始编辑器代码（约 190 行）
+3. 原始代码第 640-832 行（Live Code Display 完整逻辑）已被 5 行组件调用替换
+4. 组件完全依赖 `selectedFileAtom` 和 `generationProgressAtom`，无需额外 props
+
+**验证结果**: 
+- ✅ TypeScript 编译通过
+- ✅ ESLint 无错误（仅有依赖数组警告，符合项目规范）
+- ✅ 所有功能点都已实现，包括：
+  - 选中文件的编辑器渲染
+  - AI 思考状态显示
+  - 流式代码生成显示（实时流 + 当前文件）
+  - 空状态提示
+  - 文件头部信息（路径、图标、修改标记）
+- ✅ 代码量从约 190 行原始渲染逻辑减少到 5 行组件调用（减少 97%）
 
 ---
 
@@ -523,7 +543,7 @@ console.log('[DEBUG] generationProgress:', generationProgress);
 | 3.1 Component - PreviewPane | ✅ 已完成 | - | 已集成，所有功能验证通过 |
 | 3.2 Component - ChatPanel | ✅ 已完成 | - | 已增强并集成，支持完整功能 |
 | 3.3 Component - FileTreePanel | ✅ 已完成 | - | 已集成，支持文件树、折叠、选择 |
-| 3.4 Component - CodeEditorPanel | 待开始 | - | - |
+| 3.4 Component - CodeEditorPanel | ✅ 已完成 | - | 已集成，支持编辑器、流式显示、思考模式 |
 | 4.1 集成测试 - 基础流程 | 待开始 | - | - |
 | 4.2 集成测试 - Template | 待开始 | - | - |
 | 4.3 集成测试 - 编辑模式 | 待开始 | - | - |

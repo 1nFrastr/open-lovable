@@ -7,6 +7,27 @@ import type { EditorDocument } from '@/components/editor/codemirror/CodeMirrorEd
 import { selectedFileAtom } from '../atoms/ui';
 import { generationProgressAtom } from '../atoms/generation';
 
+// Helper function to extract file path from streamed content
+function extractFilePathFromStream(streamedCode: string): string | null {
+  // Try to find the last <file path="..."> tag
+  const matches = streamedCode.match(/<file\s+path=["']([^"']+)["']/g);
+  if (matches && matches.length > 0) {
+    const lastMatch = matches[matches.length - 1];
+    const pathMatch = lastMatch.match(/path=["']([^"']+)["']/);
+    if (pathMatch) {
+      return pathMatch[1];
+    }
+  }
+  return null;
+}
+
+// Helper function to get file extension for syntax highlighting
+function getFileExtension(filePath: string | null): string {
+  if (!filePath) return '.tsx';
+  const ext = filePath.split('.').pop()?.toLowerCase();
+  return `.${ext || 'tsx'}`;
+}
+
 export function CodeEditorPanel() {
   const selectedFile = useAtomValue(selectedFileAtom);
   const generationProgress = useAtomValue(generationProgressAtom);
@@ -40,10 +61,15 @@ export function CodeEditorPanel() {
     }
 
     // Or show the raw streamed code
+    // Try to extract real file path from stream, otherwise use generic .tsx
     if (generationProgress.streamedCode) {
+      const extractedPath = extractFilePathFromStream(generationProgress.streamedCode);
+      const filePath = extractedPath || `streaming${getFileExtension(extractedPath)}`;
+      
       return {
-        filePath: 'Generated Code',
+        filePath,
         content: generationProgress.streamedCode,
+        isRawStream: !extractedPath, // Flag to show "Generated Code" label
       };
     }
 
@@ -90,22 +116,7 @@ export function CodeEditorPanel() {
 
   // Show streaming content
   if (streamingContent) {
-    return (
-      <div className="h-full flex flex-col bg-gray-900">
-        <div className="flex items-center justify-between px-4 py-2 bg-gray-800 border-b border-gray-700">
-          <span className="text-sm text-gray-300">{streamingContent.filePath}</span>
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-            <span className="text-xs text-gray-500">Generating...</span>
-          </div>
-        </div>
-        <div className="flex-1 overflow-auto p-4">
-          <pre className="text-sm text-gray-300 font-mono whitespace-pre-wrap">
-            {streamingContent.content}
-          </pre>
-        </div>
-      </div>
-    );
+    return <StreamingCodeView content={streamingContent} />;
   }
 
   // Empty state
@@ -126,6 +137,46 @@ export function CodeEditorPanel() {
           />
         </svg>
         <p className="text-sm">Select a file to view its contents</p>
+      </div>
+    </div>
+  );
+}
+
+// Streaming code view component with syntax highlighting and auto-scroll
+function StreamingCodeView({ 
+  content 
+}: { 
+  content: { filePath: string; content: string; isRawStream?: boolean } 
+}) {
+  // Create editor document for streaming content
+  // CodeMirrorEditor has built-in auto-scroll when editable=false
+  const streamingDoc: EditorDocument = useMemo(() => ({
+    filePath: content.filePath,
+    value: content.content || '// Generating code...',
+  }), [content.filePath, content.content]);
+
+  // Get display name: use "Generated Code" for raw streams, otherwise show file name
+  const displayName = content.isRawStream ? 'Generated Code' : content.filePath;
+
+  return (
+    <div className="h-full flex flex-col bg-gray-900">
+      <div className="flex items-center justify-between px-4 py-2 bg-gray-800 border-b border-gray-700">
+        <span className="text-sm text-gray-300">
+          {displayName}
+        </span>
+        <div className="flex items-center gap-2">
+          <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+          <span className="text-xs text-gray-500">Generating...</span>
+        </div>
+      </div>
+      <div className="flex-1 overflow-hidden relative">
+        <CodeMirrorEditor 
+          doc={streamingDoc} 
+          editable={false}
+          theme="dark"
+        />
+        {/* Cursor indicator at the end */}
+        <div className="absolute bottom-2 right-2 w-2 h-4 bg-green-400 animate-pulse" />
       </div>
     </div>
   );
