@@ -275,21 +275,6 @@ const { applyGeneratedCode, captureUrlScreenshot } = useCodeGeneration();
 -  正确更新 `codeApplicationState` 各阶段
 -  `sandboxFiles` 缓存更新逻辑正确
 
-#### Step 2.3: 验证 `useChatMessages` hook 
-
-**验证结果**:
--  Hook 已定义，提供聊天消息管理功能
--  与 `chatMessagesAtom` 正确集成
--  消息添加、清除功能正常
-
-#### Step 2.4: 验证 `useInitialization` hook 
-
-**验证结果**:
--  Hook 已定义，提供初始化逻辑
--  处理 sandbox 恢复和创建
--  处理 URL 参数和模板模式
-
----
 
 #### Step 2.3: 验证 `useChatMessages` hook
 
