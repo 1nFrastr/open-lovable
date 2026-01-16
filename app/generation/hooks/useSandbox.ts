@@ -102,6 +102,72 @@ export function useSandbox() {
     }
   }, [sandboxData, setSandboxData, updateStatus]);
 
+  const fetchSandboxFiles = useCallback(async () => {
+    try {
+      console.log('[fetchSandboxFiles] Fetching files from sandbox...');
+      const response = await fetch('/api/get-sandbox-files', {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          const files = data.files || {};
+          setSandboxFiles(files);
+          setFileStructure(data.structure || '');
+          console.log('[fetchSandboxFiles] Updated file list:', Object.keys(files).length, 'files');
+
+          const fileEntries = Object.entries(files);
+          if (fileEntries.length > 0) {
+            const progressFiles = fileEntries.map(([path, content]) => {
+              const ext = path.split('.').pop()?.toLowerCase() || '';
+              let type = 'utility';
+              if (['tsx', 'jsx'].includes(ext)) type = 'component';
+              else if (ext === 'css') type = 'style';
+              else if (ext === 'json') type = 'config';
+
+              return {
+                path,
+                content: content as string,
+                type,
+                completed: true
+              };
+            });
+
+            setGenerationProgress(prev => {
+              if (prev.isGenerating || prev.files.length > 0) {
+                console.log('[fetchSandboxFiles] Skipping file population - generation in progress or files already exist');
+                return prev;
+              }
+
+              console.log('[fetchSandboxFiles] Populating files from sandbox:', progressFiles.length, 'files');
+
+              return {
+                ...prev,
+                files: progressFiles,
+                isGenerating: false,
+                status: 'Files loaded from sandbox'
+              };
+            });
+
+            // Auto-select file outside of setGenerationProgress
+            if (!selectedFile) {
+              const firstSourceFile = progressFiles.find(f =>
+                f.path.endsWith('.tsx') || f.path.endsWith('.jsx') || f.path.endsWith('.ts') || f.path.endsWith('.js')
+              );
+              if (firstSourceFile) {
+                setSelectedFile(firstSourceFile.path);
+              }
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('[fetchSandboxFiles] Error:', error);
+    }
+  }, [setSandboxFiles, setFileStructure, setGenerationProgress, selectedFile, setSelectedFile]);
+
   const createSandbox = useCallback(async (
     fromHomeScreen = false,
     templateName?: string,
@@ -194,74 +260,9 @@ Tip: I automatically detect and install npm packages from your code imports (lik
     updateStatus,
     log,
     displayStructure,
-    addChatMessage
+    addChatMessage,
+    fetchSandboxFiles
   ]);
-
-  const fetchSandboxFiles = useCallback(async () => {
-    try {
-      console.log('[fetchSandboxFiles] Fetching files from sandbox...');
-      const response = await fetch('/api/get-sandbox-files', {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' }
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        if (data.success) {
-          const files = data.files || {};
-          setSandboxFiles(files);
-          setFileStructure(data.structure || '');
-          console.log('[fetchSandboxFiles] Updated file list:', Object.keys(files).length, 'files');
-
-          const fileEntries = Object.entries(files);
-          if (fileEntries.length > 0) {
-            const progressFiles = fileEntries.map(([path, content]) => {
-              const ext = path.split('.').pop()?.toLowerCase() || '';
-              let type = 'utility';
-              if (['tsx', 'jsx'].includes(ext)) type = 'component';
-              else if (ext === 'css') type = 'style';
-              else if (ext === 'json') type = 'config';
-
-              return {
-                path,
-                content: content as string,
-                type,
-                completed: true
-              };
-            });
-
-            setGenerationProgress(prev => {
-              if (prev.isGenerating || prev.files.length > 0) {
-                console.log('[fetchSandboxFiles] Skipping file population - generation in progress or files already exist');
-                return prev;
-              }
-
-              console.log('[fetchSandboxFiles] Populating files from sandbox:', progressFiles.length, 'files');
-
-              return {
-                ...prev,
-                files: progressFiles,
-                isGenerating: false,
-                status: 'Files loaded from sandbox'
-              };
-            });
-
-            // Auto-select file outside of setGenerationProgress
-            if (!selectedFile) {
-              const firstSourceFile = progressFiles.find(f =>
-                f.path.endsWith('.tsx') || f.path.endsWith('.jsx') || f.path.endsWith('.ts') || f.path.endsWith('.js')
-              );
-              if (firstSourceFile) {
-                setSelectedFile(firstSourceFile.path);
-              }
-            }
-          }
-        }
-      }
-    } catch (error) {
-      console.error('[fetchSandboxFiles] Error:', error);
-    }
-  }, [setSandboxFiles, setFileStructure, setGenerationProgress, selectedFile, setSelectedFile]);
 
   const refreshIframe = useCallback((iframeRef: React.RefObject<HTMLIFrameElement | null>) => {
     if (iframeRef.current && sandboxData?.url) {

@@ -228,7 +228,7 @@ function AISandboxPage() {
     if (chatMessagesRef.current) {
       chatMessagesRef.current.scrollTop = chatMessagesRef.current.scrollHeight;
     }
-  }, [chatMessages]);
+  }, [chatMessages, chatMessagesRef]);
 
   // Extract functions from hooks
   const { updateStatus, log, addChatMessage, displayStructure, checkSandboxStatus, createSandbox, fetchSandboxFiles, refreshIframe } = sandboxHook;

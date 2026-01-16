@@ -124,7 +124,7 @@ export const CodeMirrorEditor = memo(
           }
         });
       }
-    }, [doc?.value, editable]);
+    }, [doc, editable]);
 
     useEffect(() => {
       if (!viewRef.current || !doc) {
@@ -134,7 +134,7 @@ export const CodeMirrorEditor = memo(
       if (typeof doc.scroll?.top === 'number' || typeof doc.scroll?.left === 'number') {
         viewRef.current.scrollDOM.scrollTo(doc.scroll.left ?? 0, doc.scroll.top ?? 0);
       }
-    }, [doc?.scroll?.top, doc?.scroll?.left]);
+    }, [doc]);
 
     useEffect(() => {
       const onUpdate = debounce((update: EditorUpdate) => {
@@ -181,7 +181,7 @@ export const CodeMirrorEditor = memo(
         viewRef.current?.destroy();
         viewRef.current = undefined;
       };
-    }, []);
+    }, [debounceChange]);
 
     useEffect(() => {
       if (!viewRef.current) {
@@ -238,7 +238,7 @@ export const CodeMirrorEditor = memo(
         autoFocusOnDocumentChange,
         doc,
       );
-    }, [doc?.value, editable, doc?.filePath, autoFocusOnDocumentChange]);
+    }, [doc, editable, autoFocusOnDocumentChange, debounceScroll, languageCompartment, settings]);
 
     return (
       <div className={`relative h-full ${className}`}>
