@@ -87,6 +87,9 @@ import {
   aiModelAtom
 } from './atoms/ui';
 
+// TEMP: Step 2.1 - Import useSandbox hook for verification
+import { useSandbox } from './hooks/useSandbox';
+
 // Dynamic import for Terminal component (requires browser APIs)
 const Terminal = dynamic(() => import('@/components/Terminal'), {
   ssr: false,
@@ -201,6 +204,11 @@ function AISandboxPage() {
   const chatMessagesRef = useRef<HTMLDivElement>(null);
   const codeDisplayRef = useRef<HTMLDivElement>(null);
   const autoSendTriggeredRef = useRef<boolean>(false);
+  
+  // TEMP: Step 2.1 - Use useSandbox hook
+  const sandboxHook = useSandbox();
+  // Note: sandboxHook provides: createSandbox, checkSandboxStatus, fetchSandboxFiles, 
+  // refreshIframe, updateStatus, log, addChatMessage, displayStructure
   
   // TEMP: Step 1.3 - Replace codeApplicationState and generationProgress with atoms
   const [codeApplicationState, setCodeApplicationState] = useAtom(codeApplicationStateAtom);
@@ -516,27 +524,9 @@ function AISandboxPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingAutoSendMessage, sandboxData, showHomeScreen]);
-
-  const updateStatus = (text: string, active: boolean) => {
-    setStatus({ text, active });
-  };
-
-  const log = (message: string, type: 'info' | 'error' | 'command' = 'info') => {
-    setResponseArea(prev => [...prev, `[${type}] ${message}`]);
-  };
-
-  const addChatMessage = (content: string, type: ChatMessage['type'], metadata?: ChatMessage['metadata']) => {
-    setChatMessages(prev => {
-      // Skip duplicate consecutive system messages
-      if (type === 'system' && prev.length > 0) {
-        const lastMessage = prev[prev.length - 1];
-        if (lastMessage.type === 'system' && lastMessage.content === content) {
-          return prev; // Skip duplicate
-        }
-      }
-      return [...prev, { content, type, timestamp: new Date(), metadata }];
-    });
-  };
+  
+  // Use functions from useSandbox hook
+  const { updateStatus, log, addChatMessage, displayStructure, checkSandboxStatus, createSandbox, fetchSandboxFiles, refreshIframe } = sandboxHook;
   
   const checkAndInstallPackages = async () => {
     // This function is only called when user explicitly requests it
@@ -625,143 +615,6 @@ function AISandboxPage() {
       }
     } catch (error: any) {
       addChatMessage(`Failed to install packages: ${error.message}`, 'system');
-    }
-  };
-
-  const checkSandboxStatus = async () => {
-    try {
-      const response = await fetch('/api/sandbox-status');
-      const data = await response.json();
-      
-      if (data.active && data.healthy && data.sandboxData) {
-        console.log('[checkSandboxStatus] Setting sandboxData from API:', data.sandboxData);
-        setSandboxData(data.sandboxData);
-        updateStatus('Sandbox active', true);
-      } else if (data.active && !data.healthy) {
-        // Sandbox exists but not responding
-        updateStatus('Sandbox not responding', false);
-        // Keep existing sandboxData if we have it - don't clear it
-      } else {
-        // Only clear sandboxData if we don't already have it or if we're explicitly checking from a fresh state
-        // This prevents clearing sandboxData during normal operation when it should persist
-        if (!sandboxData) {
-          console.log('[checkSandboxStatus] No existing sandboxData, clearing state');
-          setSandboxData(null);
-          updateStatus('No sandbox', false);
-        } else {
-          // Keep existing sandboxData and just update status
-          console.log('[checkSandboxStatus] Keeping existing sandboxData, sandbox inactive but data preserved');
-          updateStatus('Sandbox status unknown', false);
-        }
-      }
-    } catch (error) {
-      console.error('Failed to check sandbox status:', error);
-      // Only clear on error if we don't have existing sandboxData
-      if (!sandboxData) {
-        setSandboxData(null);
-        updateStatus('Error', false);
-      } else {
-        updateStatus('Status check failed', false);
-      }
-    }
-  };
-
-  const sandboxCreationRef = useRef<boolean>(false);
-  
-  const createSandbox = async (fromHomeScreen = false, templateName?: string, skipAutoFetchFiles = false) => {
-    // Prevent duplicate sandbox creation
-    if (sandboxCreationRef.current) {
-      console.log('[createSandbox] Sandbox creation already in progress, skipping...');
-      return null;
-    }
-    
-    sandboxCreationRef.current = true;
-    console.log('[createSandbox] Starting sandbox creation...', templateName ? `with template: ${templateName}` : '');
-    setLoading(true);
-    setShowLoadingBackground(true);
-    updateStatus('Creating sandbox...', false);
-    setResponseArea([]);
-    setScreenshotError(null);
-    
-    try {
-      const response = await fetch('/api/create-ai-sandbox-v2', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ template: templateName || 'react-vite' })
-      });
-      
-      const data = await response.json();
-      console.log('[createSandbox] Response data:', data);
-      
-      if (data.success) {
-        sandboxCreationRef.current = false; // Reset the ref on success
-        console.log('[createSandbox] Setting sandboxData from creation:', data);
-        setSandboxData(data);
-        updateStatus('Sandbox active', true);
-        log('Sandbox created successfully!');
-        log(`Sandbox ID: ${data.sandboxId}`);
-        log(`URL: ${data.url}`);
-        
-        // Update URL with sandbox ID
-        const newParams = new URLSearchParams(searchParams.toString());
-        newParams.set('sandbox', data.sandboxId);
-        newParams.set('model', aiModel);
-        router.push(`/generation?${newParams.toString()}`, { scroll: false });
-        
-        // Fade out loading background after sandbox loads
-        setTimeout(() => {
-          setShowLoadingBackground(false);
-        }, 3000);
-        
-        if (data.structure) {
-          displayStructure(data.structure);
-        }
-        
-        // Fetch sandbox files after creation (unless skipped for template mode)
-        if (!skipAutoFetchFiles) {
-          setTimeout(fetchSandboxFiles, 1000);
-        }
-        
-        // For Vercel sandboxes, Vite is already started during setupViteApp
-        // No need to restart it immediately after creation
-        // Only restart if there's an actual issue later
-        console.log('[createSandbox] Sandbox ready with Vite server running');
-        
-        // Only add welcome message if not coming from home screen
-        if (!fromHomeScreen) {
-          addChatMessage(`Sandbox created! ID: ${data.sandboxId}. I now have context of your sandbox and can help you build your app. Just ask me to create components and I'll automatically apply them!
-
-Tip: I automatically detect and install npm packages from your code imports (like react-router-dom, axios, etc.)`, 'system');
-        }
-        
-        setTimeout(() => {
-          if (iframeRef.current) {
-            iframeRef.current.src = data.url;
-          }
-        }, 100);
-        
-        // Return the sandbox data so it can be used immediately
-        return data;
-      } else {
-        throw new Error(data.error || 'Unknown error');
-      }
-    } catch (error: any) {
-      console.error('[createSandbox] Error:', error);
-      updateStatus('Error', false);
-      log(`Failed to create sandbox: ${error.message}`, 'error');
-      addChatMessage(`Failed to create sandbox: ${error.message}`, 'system');
-      throw error;
-    } finally {
-      setLoading(false);
-      sandboxCreationRef.current = false; // Reset the ref
-    }
-  };
-
-  const displayStructure = (structure: any) => {
-    if (typeof structure === 'object') {
-      setStructureContent(JSON.stringify(structure, null, 2));
-    } else {
-      setStructureContent(structure || 'No structure available');
     }
   };
 
@@ -1459,151 +1312,6 @@ Tip: I automatically detect and install npm packages from your code imports (lik
     }
   };
 
-  const fetchSandboxFiles = async () => {
-    // Don't check sandboxData state - the API has its own global state
-    // This allows fetching files even when React state hasn't updated yet
-    
-    try {
-      console.log('[fetchSandboxFiles] Fetching files from sandbox...');
-      const response = await fetch('/api/get-sandbox-files', {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        if (data.success) {
-          const files = data.files || {};
-          setSandboxFiles(files);
-          setFileStructure(data.structure || '');
-          console.log('[fetchSandboxFiles] Updated file list:', Object.keys(files).length, 'files');
-          
-          // Also populate generationProgress.files so the Code tab can display them
-          // This is needed when files are loaded from a template (not from AI generation)
-          // IMPORTANT: Don't interfere if generation is in progress or files already exist
-          const fileEntries = Object.entries(files);
-          if (fileEntries.length > 0) {
-            const progressFiles = fileEntries.map(([path, content]) => {
-              // Determine file type from extension
-              const ext = path.split('.').pop()?.toLowerCase() || '';
-              let type = 'utility';
-              if (['tsx', 'jsx'].includes(ext)) type = 'component';
-              else if (ext === 'css') type = 'style';
-              else if (ext === 'json') type = 'config';
-              
-              return {
-                path,
-                content: content as string,
-                type,
-                completed: true
-              };
-            });
-            
-            setGenerationProgress(prev => {
-              // Don't overwrite files if:
-              // 1. Generation is in progress
-              // 2. Files already exist from AI generation (don't replace with sandbox cache)
-              if (prev.isGenerating || prev.files.length > 0) {
-                console.log('[fetchSandboxFiles] Skipping file population - generation in progress or files already exist:', {
-                  isGenerating: prev.isGenerating,
-                  existingFiles: prev.files.length
-                });
-                return prev;
-              }
-              
-              console.log('[fetchSandboxFiles] Populating files from sandbox:', progressFiles.length, 'files');
-              
-              // Auto-select the first source file for display
-              const firstSourceFile = progressFiles.find(f => 
-                f.path.endsWith('.tsx') || f.path.endsWith('.jsx') || f.path.endsWith('.ts') || f.path.endsWith('.js')
-              );
-              if (firstSourceFile && !selectedFile) {
-                // Note: Can't call setSelectedFile here, will do it below
-              }
-              
-              return {
-                ...prev,
-                files: progressFiles,
-                isGenerating: false,
-                status: 'Files loaded from sandbox'
-              };
-            });
-            
-            // Auto-select file outside of setGenerationProgress
-            // Only if no file is currently selected
-            if (!selectedFile) {
-              const firstSourceFile = progressFiles.find(f => 
-                f.path.endsWith('.tsx') || f.path.endsWith('.jsx') || f.path.endsWith('.ts') || f.path.endsWith('.js')
-              );
-              if (firstSourceFile) {
-                setSelectedFile(firstSourceFile.path);
-              }
-            }
-          }
-        } else {
-          console.log('[fetchSandboxFiles] API returned success=false:', data.error);
-        }
-      } else {
-        console.log('[fetchSandboxFiles] API returned status:', response.status);
-      }
-    } catch (error) {
-      console.error('[fetchSandboxFiles] Error fetching files:', error);
-    }
-  };
-  
-//   const restartViteServer = async () => {
-//     try {
-//       addChatMessage('Restarting Vite dev server...', 'system');
-//       
-//       const response = await fetch('/api/restart-vite', {
-//         method: 'POST',
-//         headers: { 'Content-Type': 'application/json' }
-//       });
-//       
-//       if (response.ok) {
-//         const data = await response.json();
-//         if (data.success) {
-//           addChatMessage('✓ Vite dev server restarted successfully!', 'system');
-//           
-//           // Refresh the iframe after a short delay
-//           setTimeout(() => {
-//             if (iframeRef.current && sandboxData?.url) {
-//               iframeRef.current.src = `${sandboxData.url}?t=${Date.now()}`;
-//             }
-//           }, 2000);
-//         } else {
-//           addChatMessage(`Failed to restart Vite: ${data.error}`, 'error');
-//         }
-//       } else {
-//         addChatMessage('Failed to restart Vite server', 'error');
-//       }
-//     } catch (error) {
-//       console.error('[restartViteServer] Error:', error);
-//       addChatMessage(`Error restarting Vite: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
-//     }
-//   };
-
-//   const applyCode = async () => {
-//     const code = promptInput.trim();
-//     if (!code) {
-//       log('Please enter some code first', 'error');
-//       addChatMessage('No code to apply. Please generate code first.', 'system');
-//       return;
-//     }
-//     
-//     // Prevent double clicks
-//     if (loading) {
-//       console.log('[applyCode] Already loading, skipping...');
-//       return;
-//     }
-//     
-//     // Determine if this is an edit based on whether we have applied code before
-//     const isEdit = conversationContext.appliedCode.length > 0;
-//     await applyGeneratedCode(code, isEdit);
-//   };
-
   const renderMainContent = () => {
     if (activeTab === 'generation' && (generationProgress.isGenerating || generationProgress.files.length > 0)) {
       return (
@@ -2263,7 +1971,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
     }
     
     // Start sandbox creation in parallel if needed
-    let sandboxPromise: Promise<void> | null = null;
+    let sandboxPromise: Promise<SandboxData | null | void> | null = null;
     let sandboxCreating = false;
     
     if (!sandboxData) {
