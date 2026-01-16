@@ -3,7 +3,6 @@
 import { useState, useEffect, useRef, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Image from 'next/image';
-import { useAtom } from 'jotai';
 import { appConfig } from '@/config/app.config';
 import HeroInput from '@/components/HeroInput';
 import SidebarInput from '@/components/app/generation/SidebarInput';
@@ -28,64 +27,6 @@ import { motion } from 'framer-motion';
 import CodeApplicationProgress, { type CodeApplicationState } from '@/components/CodeApplicationProgress';
 import IframeBlankDetector from '@/components/IframeBlankDetector';
 import dynamic from 'next/dynamic';
-
-// TEMP: Import sandbox atoms for Step 1.1 verification
-import { 
-  sandboxDataAtom, 
-  sandboxFilesAtom, 
-  sandboxLoadingAtom, 
-  sandboxStatusAtom,
-  fileStructureAtom,
-  structureContentAtom,
-  responseAreaAtom
-} from './atoms/sandbox';
-
-// TEMP: Import chat atoms for Step 1.2 verification
-import {
-  chatMessagesAtom,
-  aiChatInputAtom,
-  aiEnabledAtom,
-  conversationContextAtom,
-  addChatMessageAtom
-} from './atoms/chat';
-
-// TEMP: Import generation atoms for Step 1.3 verification
-import {
-  generationProgressAtom,
-  codeApplicationStateAtom,
-  urlScreenshotAtom,
-  isScreenshotLoadedAtom,
-  isCapturingScreenshotAtom,
-  screenshotErrorAtom,
-  screenshotCollapsedAtom,
-  isPreparingDesignAtom,
-  targetUrlAtom,
-  loadingStageAtom,
-  isStartingNewGenerationAtom,
-  showLoadingBackgroundAtom,
-  shouldAutoGenerateAtom,
-  pendingAutoSendMessageAtom,
-  hasInitialSubmissionAtom
-} from './atoms/generation';
-
-// TEMP: Import UI atoms for Step 1.4 verification
-import {
-  activeTabAtom,
-  showHomeScreenAtom,
-  homeScreenFadingAtom,
-  homeUrlInputAtom,
-  homeContextInputAtom,
-  urlOverlayVisibleAtom,
-  urlInputAtom,
-  urlStatusAtom,
-  selectedFileAtom,
-  expandedFoldersAtom,
-  sidebarScrolledAtom,
-  showStyleSelectorAtom,
-  selectedStyleAtom,
-  promptInputAtom,
-  aiModelAtom
-} from './atoms/ui';
 
 // Dynamic import for Terminal component (requires browser APIs)
 const Terminal = dynamic(() => import('@/components/Terminal'), {
@@ -135,80 +76,101 @@ interface ScrapeData {
 }
 
 function AISandboxPage() {
-  // TEMP: Step 1.1 - Replace sandbox useState with Jotai atoms
-  const [sandboxData, setSandboxData] = useAtom(sandboxDataAtom);
-  const [loading, setLoading] = useAtom(sandboxLoadingAtom);
-  const [status, setStatus] = useAtom(sandboxStatusAtom);
-  const [responseArea, setResponseArea] = useAtom(responseAreaAtom);
-  const [structureContent, setStructureContent] = useAtom(structureContentAtom);
-  
-  // TEMP: Step 1.4 - Replace UI useState with Jotai atoms
-  const [promptInput, setPromptInput] = useAtom(promptInputAtom);
-  
-  // TEMP: Step 1.2 - Replace chat useState with Jotai atoms
-  const [chatMessages, setChatMessages] = useAtom(chatMessagesAtom);
-  const [aiChatInput, setAiChatInput] = useAtom(aiChatInputAtom);
-  const [aiEnabled] = useAtom(aiEnabledAtom);
+  const [sandboxData, setSandboxData] = useState<SandboxData | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [status, setStatus] = useState({ text: 'Not connected', active: false });
+  const [responseArea, setResponseArea] = useState<string[]>([]);
+  const [structureContent, setStructureContent] = useState('No sandbox created yet');
+  const [promptInput, setPromptInput] = useState('');
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [aiChatInput, setAiChatInput] = useState('');
+  const [aiEnabled] = useState(true);
   const searchParams = useSearchParams();
   const router = useRouter();
-  
-  // TEMP: Step 1.4 - Replace aiModel with atom (with initialization from searchParams)
-  const [aiModel, setAiModel] = useAtom(aiModelAtom);
-  // Initialize aiModel from searchParams on mount
-  useEffect(() => {
+  const [aiModel, setAiModel] = useState(() => {
     const modelParam = searchParams.get('model');
-    const initialModel = appConfig.ai.availableModels.includes(modelParam || '') ? modelParam! : appConfig.ai.defaultModel;
-    setAiModel(initialModel);
-  }, [searchParams, setAiModel]);
+    return appConfig.ai.availableModels.includes(modelParam || '') ? modelParam! : appConfig.ai.defaultModel;
+  });
+  const [urlOverlayVisible, setUrlOverlayVisible] = useState(false);
+  const [urlInput, setUrlInput] = useState('');
+  const [urlStatus, setUrlStatus] = useState<string[]>([]);
+  const [showHomeScreen, setShowHomeScreen] = useState(true);
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(['app', 'src', 'src/components']));
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [homeScreenFading, setHomeScreenFading] = useState(false);
+  const [homeUrlInput, setHomeUrlInput] = useState('');
+  const [homeContextInput, setHomeContextInput] = useState('');
+  const [activeTab, setActiveTab] = useState<'generation' | 'preview' | 'terminal'>('preview');
+  const [showStyleSelector, setShowStyleSelector] = useState(false);
+  const [selectedStyle, setSelectedStyle] = useState<string | null>(null);
+  const [showLoadingBackground, setShowLoadingBackground] = useState(false);
+  const [urlScreenshot, setUrlScreenshot] = useState<string | null>(null);
+  const [isScreenshotLoaded, setIsScreenshotLoaded] = useState(false);
+  const [isCapturingScreenshot, setIsCapturingScreenshot] = useState(false);
+  const [screenshotError, setScreenshotError] = useState<string | null>(null);
+  const [isPreparingDesign, setIsPreparingDesign] = useState(false);
+  const [targetUrl, setTargetUrl] = useState<string>('');
+  const [sidebarScrolled, setSidebarScrolled] = useState(false);
+  const [screenshotCollapsed, setScreenshotCollapsed] = useState(false);
+  const [loadingStage, setLoadingStage] = useState<'gathering' | 'planning' | 'generating' | null>(null);
+  const [isStartingNewGeneration, setIsStartingNewGeneration] = useState(false);
+  const [sandboxFiles, setSandboxFiles] = useState<Record<string, string>>({});
+  const [hasInitialSubmission, setHasInitialSubmission] = useState<boolean>(false);
+  const [fileStructure, setFileStructure] = useState<string>('');
   
-  const [urlOverlayVisible, setUrlOverlayVisible] = useAtom(urlOverlayVisibleAtom);
-  const [urlInput, setUrlInput] = useAtom(urlInputAtom);
-  const [urlStatus, setUrlStatus] = useAtom(urlStatusAtom);
-  const [showHomeScreen, setShowHomeScreen] = useAtom(showHomeScreenAtom);
-  const [expandedFolders, setExpandedFolders] = useAtom(expandedFoldersAtom);
-  const [selectedFile, setSelectedFile] = useAtom(selectedFileAtom);
-  const [homeScreenFading, setHomeScreenFading] = useAtom(homeScreenFadingAtom);
-  const [homeUrlInput, setHomeUrlInput] = useAtom(homeUrlInputAtom);
-  const [homeContextInput, setHomeContextInput] = useAtom(homeContextInputAtom);
-  const [activeTab, setActiveTab] = useAtom(activeTabAtom);
-  const [showStyleSelector, setShowStyleSelector] = useAtom(showStyleSelectorAtom);
-  const [selectedStyle, setSelectedStyle] = useAtom(selectedStyleAtom);
-  
-  // TEMP: Step 1.3 - Replace generation useState with Jotai atoms
-  const [showLoadingBackground, setShowLoadingBackground] = useAtom(showLoadingBackgroundAtom);
-  const [urlScreenshot, setUrlScreenshot] = useAtom(urlScreenshotAtom);
-  const [isScreenshotLoaded, setIsScreenshotLoaded] = useAtom(isScreenshotLoadedAtom);
-  const [isCapturingScreenshot, setIsCapturingScreenshot] = useAtom(isCapturingScreenshotAtom);
-  const [screenshotError, setScreenshotError] = useAtom(screenshotErrorAtom);
-  const [isPreparingDesign, setIsPreparingDesign] = useAtom(isPreparingDesignAtom);
-  const [targetUrl, setTargetUrl] = useAtom(targetUrlAtom);
-  
-  // TEMP: Step 1.4 - Replace sidebarScrolled with atom
-  const [sidebarScrolled, setSidebarScrolled] = useAtom(sidebarScrolledAtom);
-  const [screenshotCollapsed, setScreenshotCollapsed] = useAtom(screenshotCollapsedAtom);
-  const [loadingStage, setLoadingStage] = useAtom(loadingStageAtom);
-  const [isStartingNewGeneration, setIsStartingNewGeneration] = useAtom(isStartingNewGenerationAtom);
-  
-  // TEMP: Step 1.1 - Replace sandboxFiles and fileStructure with atoms
-  const [sandboxFiles, setSandboxFiles] = useAtom(sandboxFilesAtom);
-  const [hasInitialSubmission, setHasInitialSubmission] = useAtom(hasInitialSubmissionAtom);
-  const [fileStructure, setFileStructure] = useAtom(fileStructureAtom);
-  
-  // TEMP: Step 1.2 - Replace conversationContext with Jotai atom
-  const [conversationContext, setConversationContext] = useAtom(conversationContextAtom);
+  const [conversationContext, setConversationContext] = useState<{
+    scrapedWebsites: Array<{ url: string; content: any; timestamp: Date }>;
+    generatedComponents: Array<{ name: string; path: string; content: string }>;
+    appliedCode: Array<{ files: string[]; timestamp: Date }>;
+    currentProject: string;
+    lastGeneratedCode?: string;
+  }>({
+    scrapedWebsites: [],
+    generatedComponents: [],
+    appliedCode: [],
+    currentProject: '',
+    lastGeneratedCode: undefined
+  });
   
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const chatMessagesRef = useRef<HTMLDivElement>(null);
   const codeDisplayRef = useRef<HTMLDivElement>(null);
   const autoSendTriggeredRef = useRef<boolean>(false);
   
-  // TEMP: Step 1.3 - Replace codeApplicationState and generationProgress with atoms
-  const [codeApplicationState, setCodeApplicationState] = useAtom(codeApplicationStateAtom);
-  const [generationProgress, setGenerationProgress] = useAtom(generationProgressAtom);
+  const [codeApplicationState, setCodeApplicationState] = useState<CodeApplicationState>({
+    stage: null
+  });
+  
+  const [generationProgress, setGenerationProgress] = useState<{
+    isGenerating: boolean;
+    status: string;
+    components: Array<{ name: string; path: string; completed: boolean }>;
+    currentComponent: number;
+    streamedCode: string;
+    isStreaming: boolean;
+    isThinking: boolean;
+    thinkingText?: string;
+    thinkingDuration?: number;
+    currentFile?: { path: string; content: string; type: string };
+    files: Array<{ path: string; content: string; type: string; completed: boolean; edited?: boolean }>;
+    lastProcessedPosition: number;
+    isEdit?: boolean;
+  }>({
+    isGenerating: false,
+    status: '',
+    components: [],
+    currentComponent: 0,
+    streamedCode: '',
+    isStreaming: false,
+    isThinking: false,
+    files: [],
+    lastProcessedPosition: 0
+  });
 
-  // TEMP: Step 1.3 - Replace auto-generation flags with atoms
-  const [shouldAutoGenerate, setShouldAutoGenerate] = useAtom(shouldAutoGenerateAtom);
-  const [pendingAutoSendMessage, setPendingAutoSendMessage] = useAtom(pendingAutoSendMessageAtom);
+  // Store flag to trigger generation after component mounts
+  const [shouldAutoGenerate, setShouldAutoGenerate] = useState(false);
+  // Store pending message to auto-send after sandbox is ready (for template mode)
+  const [pendingAutoSendMessage, setPendingAutoSendMessage] = useState<string | null>(null);
 
   // Clear old conversation data on component mount and create/restore sandbox
   useEffect(() => {
