@@ -21,18 +21,9 @@ export function CodeEditorPanel() {
   const editorDocument: EditorDocument | null = useMemo(() => {
     if (!selectedFileData) return null;
 
-    // Determine language from file extension
-    const ext = selectedFileData.path.split('.').pop()?.toLowerCase() || '';
-    let language: EditorDocument['language'] = 'typescript';
-    if (ext === 'css' || ext === 'scss') language = 'css';
-    else if (ext === 'html') language = 'html';
-    else if (ext === 'json') language = 'json';
-    else if (ext === 'md') language = 'markdown';
-
     return {
       filePath: selectedFileData.path,
       value: selectedFileData.content,
-      language,
     };
   }, [selectedFileData]);
 

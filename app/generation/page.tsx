@@ -96,6 +96,9 @@ import { useCodeGeneration } from './hooks/useCodeGeneration';
 // TEMP: Step 2.3 - Import useChatMessages hook for verification
 import { useChatMessages } from './hooks/useChatMessages';
 
+// TEMP: Step 2.4 - Import useInitialization hook for verification
+import { useInitialization } from './hooks/useInitialization';
+
 // Dynamic import for Terminal component (requires browser APIs)
 const Terminal = dynamic(() => import('@/components/Terminal'), {
   ssr: false,
@@ -163,12 +166,6 @@ function AISandboxPage() {
   
   // TEMP: Step 1.4 - Replace aiModel with atom (with initialization from searchParams)
   const [aiModel, setAiModel] = useAtom(aiModelAtom);
-  // Initialize aiModel from searchParams on mount
-  useEffect(() => {
-    const modelParam = searchParams.get('model');
-    const initialModel = appConfig.ai.availableModels.includes(modelParam || '') ? modelParam! : appConfig.ai.defaultModel;
-    setAiModel(initialModel);
-  }, [searchParams, setAiModel]);
 
   // IMPORTANT: Clear chat messages immediately if this is a new session from home page
   // This prevents showing old messages during the initial render
@@ -258,256 +255,6 @@ function AISandboxPage() {
   // TEMP: Step 1.3 - Replace auto-generation flags with atoms
   const [shouldAutoGenerate, setShouldAutoGenerate] = useAtom(shouldAutoGenerateAtom);
   const [pendingAutoSendMessage, setPendingAutoSendMessage] = useAtom(pendingAutoSendMessageAtom);
-
-  // Clear old conversation data on component mount and create/restore sandbox
-  useEffect(() => {
-    let isMounted = true;
-    let sandboxCreated = false; // Track if sandbox was created in this effect
-
-    const initializePage = async () => {
-      // Prevent double execution in React StrictMode
-      if (sandboxCreated) return;
-      
-      // Check for template mode first
-      const isTemplateMode = sessionStorage.getItem('templateMode') === 'true';
-      const projectPrompt = sessionStorage.getItem('projectPrompt');
-      const selectedTemplate = sessionStorage.getItem('selectedTemplate');
-      const projectTitle = sessionStorage.getItem('projectTitle');
-      
-      if (isTemplateMode && projectPrompt && selectedTemplate) {
-        console.log('[generation] Template mode detected:', selectedTemplate);
-        
-        // Clear template mode storage
-        sessionStorage.removeItem('templateMode');
-        sessionStorage.removeItem('projectPrompt');
-        sessionStorage.removeItem('selectedTemplate');
-        sessionStorage.removeItem('projectTitle');
-        
-        const storedModel = sessionStorage.getItem('selectedModel');
-        if (storedModel) {
-          setAiModel(storedModel);
-          sessionStorage.removeItem('selectedModel');
-        }
-        
-        // Mark that we have an initial submission
-        setHasInitialSubmission(true);
-        
-        // Store the template info for later use
-        setHomeUrlInput(''); // No URL in template mode
-        setHomeContextInput(projectPrompt);
-        
-        // Skip the home screen
-        setShowHomeScreen(false);
-        setHomeScreenFading(false);
-        
-        // Create sandbox first (with template name so API can use bundled template)
-        // Skip auto file fetch since we'll handle it after template setup
-        sandboxCreated = true;
-        const newSandboxData = await createSandbox(true, selectedTemplate !== 'blank' ? selectedTemplate : undefined, true);
-        
-        // Now handle template download and setup
-        // Skip if sandbox was already initialized with bundled template or custom E2B template
-        const shouldSkipTemplateSetup = newSandboxData?.skipTemplateSetup || 
-          newSandboxData?.templateSource === 'bundled' || 
-          newSandboxData?.templateSource === 'e2b-template';
-        
-        if (selectedTemplate !== 'blank' && !shouldSkipTemplateSetup) {
-          console.log('[handleHomeSubmit] Template not pre-installed, downloading from GitHub...');
-          await handleTemplateSetup(selectedTemplate, projectTitle || 'New Project', projectPrompt, newSandboxData);
-        } else if (selectedTemplate !== 'blank' && shouldSkipTemplateSetup) {
-          // Template was already set up via bundled template or E2B custom template
-          console.log('[handleHomeSubmit] Using pre-installed template, skipping handleTemplateSetup');
-          
-          // Wait for sandbox files to sync, then start AI generation
-          // Use a longer delay to ensure files are ready and avoid duplicate calls
-          setTimeout(async () => {
-            console.log('[handleHomeSubmit] Syncing sandbox files before AI generation...');
-            await fetchSandboxFiles();
-            console.log('[handleHomeSubmit] Files synced, starting AI generation');
-            // Switch to generation tab and start AI
-            setActiveTab('generation');
-            setPendingAutoSendMessage(projectPrompt);
-          }, 2500);
-        } else {
-          // Blank template - wait for sandbox to be ready, then start AI generation
-          setTimeout(async () => {
-            console.log('[handleHomeSubmit] Blank template ready, starting AI generation');
-            await fetchSandboxFiles();
-            setActiveTab('generation');
-            setPendingAutoSendMessage(projectPrompt);
-          }, 2000);
-        }
-        
-        return;
-      }
-      
-      // First check URL parameters (from home page navigation)
-      const urlParam = searchParams.get('url');
-      const templateParam = searchParams.get('template');
-      const detailsParam = searchParams.get('details');
-      
-      // Then check session storage as fallback
-      const storedUrl = urlParam || sessionStorage.getItem('targetUrl');
-      const storedStyle = templateParam || sessionStorage.getItem('selectedStyle');
-      const storedModel = sessionStorage.getItem('selectedModel');
-      const storedInstructions = sessionStorage.getItem('additionalInstructions');
-      
-      if (storedUrl) {
-        // Mark that we have an initial submission since we're loading with a URL
-        setHasInitialSubmission(true);
-        
-        // Clear sessionStorage after reading  
-        sessionStorage.removeItem('targetUrl');
-        sessionStorage.removeItem('selectedStyle');
-        sessionStorage.removeItem('selectedModel');
-        sessionStorage.removeItem('additionalInstructions');
-        // Note: Don't clear siteMarkdown here, it will be cleared when used
-        
-        // Set the values in the component state
-        setHomeUrlInput(storedUrl);
-        setSelectedStyle(storedStyle || 'modern');
-        
-        // Add details to context if provided
-        if (detailsParam) {
-          setHomeContextInput(detailsParam);
-        } else if (storedStyle && !urlParam) {
-          // Only apply stored style if no screenshot URL is provided
-          // This prevents unwanted style inheritance when using screenshot search
-          const styleNames: Record<string, string> = {
-            '1': 'Glassmorphism',
-            '2': 'Neumorphism',
-            '3': 'Brutalism',
-            '4': 'Minimalist',
-            '5': 'Dark Mode',
-            '6': 'Gradient Rich',
-            '7': '3D Depth',
-            '8': 'Retro Wave',
-            'modern': 'Modern clean and minimalist',
-            'playful': 'Fun colorful and playful',
-            'professional': 'Corporate professional and sleek',
-            'artistic': 'Creative artistic and unique'
-          };
-          const styleName = styleNames[storedStyle] || storedStyle;
-          let contextString = `${styleName} style design`;
-          
-          // Add additional instructions if provided
-          if (storedInstructions) {
-            contextString += `. ${storedInstructions}`;
-          }
-          
-          setHomeContextInput(contextString);
-        } else if (storedInstructions && !urlParam) {
-          // Apply only instructions if no style but instructions are provided
-          // and no screenshot URL is provided
-          setHomeContextInput(storedInstructions);
-        }
-        
-        if (storedModel) {
-          setAiModel(storedModel);
-        }
-        
-        // Skip the home screen and go directly to builder
-        setShowHomeScreen(false);
-        setHomeScreenFading(false);
-        
-        // Set flag to auto-trigger generation after component updates
-        setShouldAutoGenerate(true);
-        
-        // Also set autoStart flag for the effect
-        sessionStorage.setItem('autoStart', 'true');
-      }
-      
-      // Clear old conversation (both backend and frontend state)
-      try {
-        // Clear backend conversation state
-        await fetch('/api/conversation-state', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'clear-old' })
-        });
-        console.log('[home] Cleared old conversation data on mount');
-
-        // Note: Frontend chat messages are already cleared synchronously before render
-        // (see isNewSessionRef logic above) to prevent showing old messages
-      } catch (error) {
-        console.error('[ai-sandbox] Failed to clear old conversation:', error);
-        if (isMounted) {
-          addChatMessage('Failed to clear old conversation data.', 'error');
-        }
-      }
-      
-      if (!isMounted) return;
-
-      // Check if sandbox ID is in URL
-      const sandboxIdParam = searchParams.get('sandbox');
-      
-      setLoading(true);
-      try {
-        if (sandboxIdParam) {
-          console.log('[home] Attempting to restore sandbox:', sandboxIdParam);
-          // For now, just create a new sandbox - you could enhance this to actually restore
-          // the specific sandbox if your backend supports it
-          sandboxCreated = true;
-          await createSandbox(true);
-        } else {
-          console.log('[home] No sandbox in URL, creating new sandbox automatically...');
-          sandboxCreated = true;
-          await createSandbox(true);
-        }
-        
-        // If we have a URL from the home page, mark for automatic start
-        if (storedUrl && isMounted) {
-          // We'll trigger the generation after the component is fully mounted
-          // and the startGeneration function is defined
-          sessionStorage.setItem('autoStart', 'true');
-        }
-      } catch (error) {
-        console.error('[ai-sandbox] Failed to create or restore sandbox:', error);
-        if (isMounted) {
-          addChatMessage('Failed to create or restore sandbox.', 'error');
-        }
-      } finally {
-        if (isMounted) {
-          setLoading(false);
-        }
-      }
-    };
-    
-    initializePage();
-
-    return () => {
-      isMounted = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Run only on mount
-  
-  useEffect(() => {
-    // Handle Escape key for home screen
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && showHomeScreen) {
-        setHomeScreenFading(true);
-        setTimeout(() => {
-          setShowHomeScreen(false);
-          setHomeScreenFading(false);
-        }, 500);
-      }
-    };
-    
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [showHomeScreen]);
-  
-  // Start capturing screenshot if URL is provided on mount (from home screen)
-  useEffect(() => {
-    if (!showHomeScreen && homeUrlInput && !urlScreenshot && !isCapturingScreenshot) {
-      let screenshotUrl = homeUrlInput.trim();
-      if (!screenshotUrl.match(/^https?:\/\//i)) {
-        screenshotUrl = 'https://' + screenshotUrl;
-      }
-      captureUrlScreenshot(screenshotUrl);
-    }
-  }, [showHomeScreen, homeUrlInput]); // eslint-disable-line react-hooks/exhaustive-deps
-
   // Auto-start generation if flagged
   useEffect(() => {
     const autoStart = sessionStorage.getItem('autoStart');
@@ -521,7 +268,7 @@ function AISandboxPage() {
     }
   }, [showHomeScreen, homeUrlInput]); // eslint-disable-line react-hooks/exhaustive-deps
 
-
+  // TEMP: Step 2.4 - Keep this: Sandbox status check (not in useInitialization)
   useEffect(() => {
     // Only check sandbox status on mount if we don't already have sandboxData
     // AND we're not auto-starting a new generation (which would create a new sandbox)
@@ -537,56 +284,8 @@ function AISandboxPage() {
     }
   }, [chatMessages]);
 
-  // Auto-trigger generation when flag is set (from home page navigation with URL)
-  useEffect(() => {
-    if (shouldAutoGenerate && homeUrlInput && !showHomeScreen) {
-      // Reset the flag
-      setShouldAutoGenerate(false);
-      
-      // URL-based clone mode only
-      const timer = setTimeout(() => {
-        console.log('[generation] Auto-triggering generation from URL params');
-        startGeneration();
-      }, 1000);
-      
-      return () => clearTimeout(timer);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shouldAutoGenerate, homeUrlInput, showHomeScreen]);
-
-  // Auto-send chat message when sandbox is ready (for template mode)
-  useEffect(() => {
-    if (pendingAutoSendMessage && sandboxData && !showHomeScreen && !autoSendTriggeredRef.current) {
-      const messageToSend = pendingAutoSendMessage;
-      autoSendTriggeredRef.current = true;
-      setPendingAutoSendMessage(null);
-      
-      // Small delay to ensure UI is ready
-      setTimeout(() => {
-        console.log('[generation] Auto-sending chat message after sandbox ready:', messageToSend);
-        sendChatMessage(messageToSend);
-      }, 500);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingAutoSendMessage, sandboxData, showHomeScreen]);
-  
-  // Use functions from useSandbox hook
+  // Extract functions from hooks for use in the component  // Use functions from useSandbox hook
   const { updateStatus, log, addChatMessage, displayStructure, checkSandboxStatus, createSandbox, fetchSandboxFiles, refreshIframe } = sandboxHook;
-  
-  // TEMP: Step 2.3 - checkAndInstallPackages now provided by useChatMessages hook
-  /*
-  const checkAndInstallPackages = async () => {
-    // This function is only called when user explicitly requests it
-    // Don't show error if no sandbox - it's likely being created
-    if (!sandboxData) {
-      console.log('[checkAndInstallPackages] No sandbox data available yet');
-      return;
-    }
-
-    // Vite error checking removed - handled by template setup
-    addChatMessage('Checking packages... Sandbox is ready with Vite configuration.', 'system');
-  };
-  */
   
   const handleSurfaceError = (_errors: any[]) => {
     // Function kept for compatibility but Vite errors are now handled by template
@@ -2210,6 +1909,25 @@ Focus on the key sections and content, making it clean and modern.`;
       }
     }, 500);
   };
+
+  // TEMP: Step 2.4 - Use useInitialization hook
+  // This hook handles all initialization logic including:
+  // - AI model initialization from URL params
+  // - Template mode detection and setup
+  // - URL parameter processing
+  // - SessionStorage handling
+  // - Auto-generation triggers
+  // - Escape key handling
+  // - Screenshot capture
+  // - Auto-send chat messages
+  useInitialization({
+    createSandbox: sandboxHook.createSandbox,
+    fetchSandboxFiles: sandboxHook.fetchSandboxFiles,
+    captureUrlScreenshot: codeGenerationHook.captureUrlScreenshot,
+    startGeneration,
+    sendChatMessage,
+    handleTemplateSetup,
+  });
 
   return (
     <HeaderProvider>
