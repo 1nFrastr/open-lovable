@@ -299,7 +299,7 @@ const { sendChatMessage } = useChatMessages({
 - 需要正确更新 `generationProgress` 状态
 - 依赖 `createSandbox` 和 `applyGeneratedCode`
 
-#### Step 2.4: 验证 `useInitialization` hook
+#### Step 2.4: 验证 `useInitialization` hook ✅
 
 **关键逻辑对比**:
 - [ ] Template mode 检测和处理
