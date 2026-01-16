@@ -2,8 +2,13 @@
 
 import React, { useRef, useEffect } from 'react';
 import { useAtomValue } from 'jotai';
+import HeroInput from '@/components/HeroInput';
+import CodeApplicationProgress from '@/components/CodeApplicationProgress';
 import { BrandingDisplay } from './BrandingDisplay';
 import { chatMessagesAtom, type ChatMessage } from '../atoms/chat';
+import { generationProgressAtom, codeApplicationStateAtom } from '../atoms/generation';
+import { CodeMirrorEditor } from '@/components/editor/codemirror/CodeMirrorEditor';
+import { motion } from 'framer-motion';
 
 interface ChatPanelProps {
   onSendMessage: (message?: string) => void;
@@ -21,6 +26,8 @@ export function ChatPanel({
   isLoading,
 }: ChatPanelProps) {
   const chatMessages = useAtomValue(chatMessagesAtom);
+  const generationProgress = useAtomValue(generationProgressAtom);
+  const codeApplicationState = useAtomValue(codeApplicationStateAtom);
   const chatMessagesRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll chat messages
@@ -30,18 +37,6 @@ export function ChatPanel({
     }
   }, [chatMessages]);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    onSendMessage();
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      onSendMessage();
-    }
-  };
-
   return (
     <div className="flex flex-col h-full">
       {/* Messages */}
@@ -49,44 +44,70 @@ export function ChatPanel({
         className="flex-1 overflow-y-auto p-6 flex flex-col gap-4 scrollbar-hide"
         ref={chatMessagesRef}
       >
-        {chatMessages.map((msg, idx) => (
-          <ChatMessageItem key={idx} message={msg} />
-        ))}
+        {chatMessages.map((msg, idx) => {
+          // Check if this message is from a successful generation
+          const isGenerationComplete =
+            msg.content.includes('Successfully recreated') ||
+            msg.content.includes('AI recreation generated!') ||
+            msg.content.includes('Code generated!');
+
+          return (
+            <ChatMessageItem
+              key={idx}
+              message={msg}
+              isGenerationComplete={isGenerationComplete}
+              isLastMessage={idx === chatMessages.length - 1}
+              generationFiles={generationProgress.files}
+              hasAppliedFilesInChat={chatMessages.some((m) => m.metadata?.appliedFiles)}
+            />
+          );
+        })}
+
+        {/* Code application progress */}
+        {codeApplicationState.stage && (
+          <CodeApplicationProgress state={codeApplicationState} />
+        )}
+
+        {/* File generation progress - inline display (during generation) */}
+        {generationProgress.isGenerating && (
+          <FileGenerationProgress
+            status={generationProgress.status}
+            files={generationProgress.files}
+            currentFile={generationProgress.currentFile}
+            streamedCode={generationProgress.streamedCode}
+          />
+        )}
       </div>
 
       {/* Input */}
-      <form onSubmit={handleSubmit} className="p-4 border-t border-border">
-        <div className="relative">
-          <textarea
-            value={aiChatInput}
-            onChange={(e) => setAiChatInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Describe what you want to build..."
-            className="w-full px-4 py-3 pr-12 text-sm bg-gray-50 border border-gray-200 rounded-lg resize-none focus:outline-none focus:border-gray-300 focus:ring-1 focus:ring-gray-300"
-            rows={3}
-            disabled={isGenerating || isLoading}
-          />
-          <button
-            type="submit"
-            disabled={!aiChatInput.trim() || isGenerating || isLoading}
-            className="absolute bottom-3 right-3 p-2 bg-[#36322F] text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#4a4541] transition-colors"
-          >
-            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
-              />
-            </svg>
-          </button>
-        </div>
-      </form>
+      <div className="p-4 border-t border-border bg-background-base">
+        <HeroInput
+          value={aiChatInput}
+          onChange={setAiChatInput}
+          onSubmit={onSendMessage}
+          placeholder="Describe what you want to build..."
+          showSearchFeatures={false}
+        />
+      </div>
     </div>
   );
 }
 
-function ChatMessageItem({ message }: { message: ChatMessage }) {
+interface ChatMessageItemProps {
+  message: ChatMessage;
+  isGenerationComplete: boolean;
+  isLastMessage: boolean;
+  generationFiles: Array<{ path: string; type: string }>;
+  hasAppliedFilesInChat: boolean;
+}
+
+function ChatMessageItem({
+  message,
+  isGenerationComplete,
+  isLastMessage,
+  generationFiles,
+  hasAppliedFilesInChat,
+}: ChatMessageItemProps) {
   return (
     <div className="block">
       <div className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -125,8 +146,44 @@ function ChatMessageItem({ message }: { message: ChatMessage }) {
 
           {/* Show applied files if this is an apply success message */}
           {message.metadata?.appliedFiles && message.metadata.appliedFiles.length > 0 && (
-            <AppliedFilesList files={message.metadata.appliedFiles} />
+            <AppliedFilesList
+              files={message.metadata.appliedFiles}
+              title={message.content.includes('Applied') ? 'Files Updated:' : 'Generated Files:'}
+            />
           )}
+
+          {/* Show generated files for completion messages - but only if no appliedFiles already shown */}
+          {isGenerationComplete &&
+            generationFiles.length > 0 &&
+            isLastMessage &&
+            !message.metadata?.appliedFiles &&
+            !hasAppliedFilesInChat && (
+              <div className="mt-2 inline-block bg-gray-100 rounded-[10px] p-3">
+                <div className="text-xs font-medium mb-1 text-gray-700">Generated Files:</div>
+                <div className="flex flex-wrap items-start gap-1">
+                  {generationFiles.map((file, fileIdx) => (
+                    <div
+                      key={`complete-${fileIdx}`}
+                      className="inline-flex items-center gap-1.5 px-6 py-1.5 bg-[#36322F] text-white rounded-[10px] text-xs animate-fade-in-up"
+                      style={{ animationDelay: `${fileIdx * 30}ms` }}
+                    >
+                      <span
+                        className={`inline-block w-1.5 h-1.5 rounded-full ${
+                          file.type === 'css'
+                            ? 'bg-blue-400'
+                            : file.type === 'javascript'
+                            ? 'bg-yellow-400'
+                            : file.type === 'json'
+                            ? 'bg-green-400'
+                            : 'bg-gray-400'
+                        }`}
+                      />
+                      {file.path.split('/').pop()}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
         </div>
       </div>
     </div>
@@ -185,21 +242,128 @@ function ErrorMessage({ message }: { message: ChatMessage }) {
   );
 }
 
-function AppliedFilesList({ files }: { files: string[] }) {
-  const displayFiles = files.slice(0, 5);
-  const remainingCount = files.length - displayFiles.length;
-
+function AppliedFilesList({ files, title }: { files: string[]; title: string }) {
   return (
-    <div className="mt-2 text-xs text-gray-400">
-      <div className="font-medium mb-1">Files applied:</div>
-      <ul className="list-disc list-inside">
-        {displayFiles.map((file, idx) => (
-          <li key={idx} className="truncate">
-            {file}
-          </li>
+    <div className="mt-3 inline-block bg-gray-100 rounded-[10px] p-5">
+      <div className="text-sm font-medium mb-3 text-gray-700">{title}</div>
+      <div className="flex flex-wrap items-start gap-2">
+        {files.map((filePath, fileIdx) => {
+          const fileName = filePath.split('/').pop() || filePath;
+          const fileExt = fileName.split('.').pop() || '';
+          const fileType =
+            fileExt === 'jsx' || fileExt === 'js'
+              ? 'javascript'
+              : fileExt === 'css'
+              ? 'css'
+              : fileExt === 'json'
+              ? 'json'
+              : 'text';
+
+          return (
+            <div
+              key={`applied-${fileIdx}`}
+              className="inline-flex items-center gap-1.5 px-6 py-1.5 bg-[#36322F] text-white rounded-[10px] text-sm animate-fade-in-up"
+              style={{ animationDelay: `${fileIdx * 30}ms` }}
+            >
+              <span
+                className={`inline-block w-1.5 h-1.5 rounded-full ${
+                  fileType === 'css'
+                    ? 'bg-blue-400'
+                    : fileType === 'javascript'
+                    ? 'bg-yellow-400'
+                    : fileType === 'json'
+                    ? 'bg-green-400'
+                    : 'bg-gray-400'
+                }`}
+              />
+              {fileName}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function FileGenerationProgress({
+  status,
+  files,
+  currentFile,
+  streamedCode,
+}: {
+  status: string;
+  files: Array<{ path: string; type: string }>;
+  currentFile?: { path: string; type: string };
+  streamedCode?: string;
+}) {
+  return (
+    <div className="inline-block bg-gray-100 rounded-lg p-3">
+      <div className="text-sm font-medium mb-2 text-gray-700">{status}</div>
+      <div className="flex flex-wrap items-start gap-1">
+        {/* Show completed files */}
+        {files.map((file, idx) => (
+          <div
+            key={`file-${idx}`}
+            className="inline-flex items-center gap-1.5 px-6 py-1.5 bg-[#36322F] text-white rounded-[10px] text-xs animate-fade-in-up"
+            style={{ animationDelay: `${idx * 30}ms` }}
+          >
+            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+            </svg>
+            {file.path.split('/').pop()}
+          </div>
         ))}
-        {remainingCount > 0 && <li className="text-gray-500">...and {remainingCount} more</li>}
-      </ul>
+
+        {/* Show current file being generated */}
+        {currentFile && (
+          <div
+            className="flex items-center gap-1 px-2 py-1 bg-[#36322F]/70 text-white rounded-[10px] text-sm animate-pulse"
+            style={{ animationDelay: `${files.length * 30}ms` }}
+          >
+            <div className="w-16 h-16 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            {currentFile.path.split('/').pop()}
+          </div>
+        )}
+      </div>
+
+      {/* Live streaming response display */}
+      {streamedCode && (
+        <motion.div
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: 'auto' }}
+          exit={{ opacity: 0, height: 0 }}
+          transition={{ duration: 0.3 }}
+          className="mt-3 border-t border-gray-300 pt-3"
+        >
+          <div className="flex items-center gap-2 mb-2">
+            <div className="flex items-center gap-1">
+              <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse" />
+              <span className="text-xs font-medium text-gray-600">AI Response Stream</span>
+            </div>
+            <div className="flex-1 h-px bg-gradient-to-r from-gray-300 to-transparent" />
+          </div>
+          <div className="bg-gray-900 border border-gray-700 rounded h-32 relative">
+            <CodeMirrorEditor
+              theme="dark"
+              editable={false}
+              doc={{
+                value: (() => {
+                  const lastContent = streamedCode.slice(-1000);
+                  // Show the last part of the stream, starting from a complete tag if possible
+                  const startIndex = lastContent.indexOf('<');
+                  return startIndex !== -1 ? lastContent.slice(startIndex) : lastContent;
+                })(),
+                filePath: 'progress.jsx',
+              }}
+              settings={{
+                fontSize: '11px',
+                tabSize: 2,
+              }}
+            />
+            <span className="absolute bottom-3 right-3 w-3 h-4 bg-orange-400 animate-pulse" />
+          </div>
+        </motion.div>
+      )}
     </div>
   );
 }

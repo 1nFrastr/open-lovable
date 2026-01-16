@@ -102,6 +102,9 @@ import { useInitialization } from './hooks/useInitialization';
 // TEMP: Step 3.1 - Import PreviewPane component for verification
 import { PreviewPane, type PreviewPaneRef } from './components/PreviewPane';
 
+// TEMP: Step 3.2 - Import ChatPanel component for verification
+import { ChatPanel } from './components/ChatPanel';
+
 // Dynamic import for Terminal component (requires browser APIs)
 const Terminal = dynamic(() => import('@/components/Terminal'), {
   ssr: false,
@@ -1912,7 +1915,18 @@ Focus on the key sections and content, making it clean and modern.`;
             </div>
           )}
 
-          <div
+          {/* TEMP: Step 3.2 - Use ChatPanel component */}
+          <ChatPanel
+            onSendMessage={sendChatMessage}
+            aiChatInput={aiChatInput}
+            setAiChatInput={setAiChatInput}
+            isGenerating={generationProgress.isGenerating}
+            isLoading={loading}
+          />
+          
+          {/* OLD CODE - To be removed after verification */}
+          {false && (<>
+            <div
             className="flex-1 overflow-y-auto p-6 flex flex-col gap-4 scrollbar-hide"
             ref={chatMessagesRef}>
             {chatMessages.map((msg, idx) => {
@@ -2312,6 +2326,7 @@ Focus on the key sections and content, making it clean and modern.`;
               showSearchFeatures={false}
             />
           </div>
+          {/* END OF OLD CODE */}</>)}
         </div>
 
         {/* Right Panel - Preview or Generation (2/3 of remaining width) */}

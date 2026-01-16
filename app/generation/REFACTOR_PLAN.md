@@ -331,19 +331,53 @@ useInitialization({
 
 ### 阶段 3: Components 验证 (UI 组件)
 
-#### Step 3.1: 验证 `PreviewPane` 组件
-- [ ] 加载状态显示
-- [ ] Screenshot 显示
-- [ ] Iframe 渲染
-- [ ] 刷新按钮功能
-- [ ] `CodeApplicationOverlay` 显示
+#### Step 3.1: 验证 `PreviewPane` 组件 ✅
+- [x] 加载状态显示 - 第 68-98 行实现了 LoadingOverlay
+- [x] Screenshot 显示 - 第 72-85 行显示截图背景
+- [x] Iframe 渲染 - 第 101-116 行渲染 sandbox iframe
+- [x] 刷新按钮功能 - 第 146-164 行 + useImperativeHandle (第 48-55 行)
+- [x] `CodeApplicationOverlay` 显示 - 第 133-135 行条件渲染
 
-**测试方法**: 在 `page.tsx` 中直接使用 `<PreviewPane />`
+**已完成的集成**:
+1. 在 `page.tsx` 第 103 行导入 `PreviewPane` 组件
+2. 在 `page.tsx` 第 224 行创建 `previewPaneRef`
+3. 在 `page.tsx` 第 948 行使用 `<PreviewPane ref={previewPaneRef} onScreenshotLoaded={() => setIsScreenshotLoaded(true)} />`
+4. 在 `page.tsx` 第 451 行通过 ref 调用 `refreshIframe()` 方法
 
-#### Step 3.2: 验证 `ChatPanel` 组件
-- [ ] 消息列表渲染
-- [ ] 输入框功能
-- [ ] 发送消息功能
+**验证结果**: 
+- ✅ TypeScript 编译通过
+- ✅ 所有功能点都已实现
+- ✅ forwardRef 和 useImperativeHandle 正确使用
+- ✅ 所有依赖的 atoms 正确导入和使用
+
+#### Step 3.2: 验证 `ChatPanel` 组件 ✅
+- [x] 消息列表渲染 - 支持所有消息类型 (user, ai, system, command, error)
+- [x] 输入框功能 - 使用 HeroInput 组件
+- [x] 发送消息功能 - onSendMessage 回调
+- [x] BrandingDisplay 集成 - 显示品牌数据
+- [x] 文件列表显示 - appliedFiles 和 generated files
+- [x] CodeApplicationProgress - 显示代码应用进度
+- [x] 实时文件生成进度 - 流式显示生成状态
+- [x] 实时代码流显示 - CodeMirror 编辑器展示 AI 响应
+
+**已完成的增强**:
+1. 增强 ChatPanel 组件以支持复杂的消息渲染
+2. 集成 generationProgress 和 codeApplicationState atoms
+3. 添加 FileGenerationProgress 子组件显示实时生成进度
+4. 更新 ChatMessageItem 支持文件列表显示
+5. 使用 HeroInput 替代简单 textarea
+6. 添加 CodeApplicationProgress 组件显示包安装进度
+
+**已完成的集成**:
+1. 在 `page.tsx` 第 106 行导入 `ChatPanel` 组件
+2. 在 `page.tsx` 第 1920-1930 行使用 `<ChatPanel />` 替换原始聊天面板
+3. 旧代码使用 `{false && (<>...</>)}` 条件渲染暂时保留，待验证后删除
+
+**验证结果**: 
+- ✅ TypeScript 编译通过
+- ✅ 所有功能点都已实现
+- ✅ 集成了所有必要的 atoms 和组件
+- ✅ 支持完整的消息类型和元数据显示
 
 #### Step 3.3: 验证 `FileTreePanel` 组件
 - [ ] 文件树渲染
@@ -462,16 +496,16 @@ console.log('[DEBUG] generationProgress:', generationProgress);
 
 | 阶段 | 状态 | 完成日期 | 备注 |
 |-----|------|---------|------|
-| 1.1 Atoms - sandbox | 待开始 | - | - |
-| 1.2 Atoms - chat | 待开始 | - | - |
-| 1.3 Atoms - generation | 待开始 | - | - |
-| 1.4 Atoms - ui | 待开始 | - | - |
-| 2.1 Hook - useSandbox | 待开始 | - | - |
-| 2.2 Hook - useCodeGeneration | 待开始 | - | - |
-| 2.3 Hook - useChatMessages | 待开始 | - | - |
-| 2.4 Hook - useInitialization | 待开始 | - | - |
-| 3.1 Component - PreviewPane | 待开始 | - | - |
-| 3.2 Component - ChatPanel | 待开始 | - | - |
+| 1.1 Atoms - sandbox | ✅ 已完成 | - | 所有 sandbox atoms 已验证 |
+| 1.2 Atoms - chat | ✅ 已完成 | - | 所有 chat atoms 已验证 |
+| 1.3 Atoms - generation | ✅ 已完成 | - | 所有 generation atoms 已验证 |
+| 1.4 Atoms - ui | ✅ 已完成 | - | 所有 UI atoms 已验证 |
+| 2.1 Hook - useSandbox | ✅ 已完成 | - | 已集成到 page.tsx |
+| 2.2 Hook - useCodeGeneration | ✅ 已完成 | - | 已集成到 page.tsx |
+| 2.3 Hook - useChatMessages | ✅ 已完成 | - | 已集成到 page.tsx |
+| 2.4 Hook - useInitialization | ✅ 已完成 | - | 已集成到 page.tsx |
+| 3.1 Component - PreviewPane | ✅ 已完成 | - | 已集成，所有功能验证通过 |
+| 3.2 Component - ChatPanel | ✅ 已完成 | - | 已增强并集成，支持完整功能 |
 | 3.3 Component - FileTreePanel | 待开始 | - | - |
 | 3.4 Component - CodeEditorPanel | 待开始 | - | - |
 | 4.1 集成测试 - 基础流程 | 待开始 | - | - |
