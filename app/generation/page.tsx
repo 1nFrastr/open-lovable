@@ -1,35 +1,24 @@
 'use client';
 
-import { useState, useEffect, useRef, Suspense } from 'react';
+import { useEffect, useRef, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import Image from 'next/image';
 import { useAtom } from 'jotai';
 import { appConfig } from '@/config/app.config';
-import HeroInput from '@/components/HeroInput';
 import SidebarInput from '@/components/app/generation/SidebarInput';
 import HeaderBrandKit from '@/components/shared/header/BrandKit/BrandKit';
 import { HeaderProvider } from '@/components/shared/header/HeaderContext';
-import { CodeMirrorEditor } from '@/components/editor/codemirror/CodeMirrorEditor';
-import type { EditorDocument } from '@/components/editor/codemirror/CodeMirrorEditor';
-// Import icons from centralized module to avoid Turbopack chunk issues
+// Import icons used in page
 import { 
   FiFile, 
-  FiChevronRight, 
-  FiChevronDown,
-  FiGithub,
   BsFolderFill, 
-  BsFolder2Open,
   SiJavascript, 
   SiReact, 
   SiCss3, 
   SiJson 
 } from '@/lib/icons';
-import { motion } from 'framer-motion';
-import CodeApplicationProgress, { type CodeApplicationState } from '@/components/CodeApplicationProgress';
-import IframeBlankDetector from '@/components/IframeBlankDetector';
 import dynamic from 'next/dynamic';
 
-// TEMP: Import sandbox atoms for Step 1.1 verification
+// Import atoms
 import { 
   sandboxDataAtom, 
   sandboxFilesAtom, 
@@ -40,16 +29,13 @@ import {
   responseAreaAtom
 } from './atoms/sandbox';
 
-// TEMP: Import chat atoms for Step 1.2 verification
 import {
   chatMessagesAtom,
   aiChatInputAtom,
   aiEnabledAtom,
-  conversationContextAtom,
-  addChatMessageAtom
+  conversationContextAtom
 } from './atoms/chat';
 
-// TEMP: Import generation atoms for Step 1.3 verification
 import {
   generationProgressAtom,
   codeApplicationStateAtom,
@@ -68,7 +54,6 @@ import {
   hasInitialSubmissionAtom
 } from './atoms/generation';
 
-// TEMP: Import UI atoms for Step 1.4 verification
 import {
   activeTabAtom,
   showHomeScreenAtom,
@@ -87,28 +72,16 @@ import {
   aiModelAtom
 } from './atoms/ui';
 
-// TEMP: Step 2.1 - Import useSandbox hook for verification
+// Import hooks
 import { useSandbox } from './hooks/useSandbox';
-
-// TEMP: Step 2.2 - Import useCodeGeneration hook for verification
 import { useCodeGeneration } from './hooks/useCodeGeneration';
-
-// TEMP: Step 2.3 - Import useChatMessages hook for verification
 import { useChatMessages } from './hooks/useChatMessages';
-
-// TEMP: Step 2.4 - Import useInitialization hook for verification
 import { useInitialization } from './hooks/useInitialization';
 
-// TEMP: Step 3.1 - Import PreviewPane component for verification
+// Import components
 import { PreviewPane, type PreviewPaneRef } from './components/PreviewPane';
-
-// TEMP: Step 3.2 - Import ChatPanel component for verification
 import { ChatPanel } from './components/ChatPanel';
-
-// TEMP: Step 3.3 - Import FileTreePanel component for verification
 import { FileTreePanel } from './components/FileTreePanel';
-
-// TEMP: Step 3.4 - Import CodeEditorPanel component for verification
 import { CodeEditorPanel } from './components/CodeEditorPanel';
 
 // Dynamic import for Terminal component (requires browser APIs)
@@ -130,21 +103,6 @@ interface SandboxData {
   [key: string]: any;
 }
 
-interface ChatMessage {
-  content: string;
-  type: 'user' | 'ai' | 'system' | 'file-update' | 'command' | 'error';
-  timestamp: Date;
-  metadata?: {
-    scrapedUrl?: string;
-    scrapedContent?: any;
-    generatedCode?: string;
-    appliedFiles?: string[];
-    commandType?: 'input' | 'output' | 'error' | 'success';
-    brandingData?: any;
-    sourceUrl?: string;
-  };
-}
-
 interface ScrapeData {
   success: boolean;
   content?: string;
@@ -159,25 +117,23 @@ interface ScrapeData {
 }
 
 function AISandboxPage() {
-  // TEMP: Step 1.1 - Replace sandbox useState with Jotai atoms
-  const [sandboxData, setSandboxData] = useAtom(sandboxDataAtom);
+  // Atoms - Sandbox
+  const [sandboxData] = useAtom(sandboxDataAtom);
   const [loading, setLoading] = useAtom(sandboxLoadingAtom);
-  const [status, setStatus] = useAtom(sandboxStatusAtom);
   const [responseArea, setResponseArea] = useAtom(responseAreaAtom);
   const [structureContent, setStructureContent] = useAtom(structureContentAtom);
   
-  // TEMP: Step 1.4 - Replace UI useState with Jotai atoms
+  // Atoms - UI
   const [promptInput, setPromptInput] = useAtom(promptInputAtom);
+  const [aiModel, setAiModel] = useAtom(aiModelAtom);
   
-  // TEMP: Step 1.2 - Replace chat useState with Jotai atoms
+  // Atoms - Chat
   const [chatMessages, setChatMessages] = useAtom(chatMessagesAtom);
   const [aiChatInput, setAiChatInput] = useAtom(aiChatInputAtom);
   const [aiEnabled] = useAtom(aiEnabledAtom);
+  
   const searchParams = useSearchParams();
   const router = useRouter();
-  
-  // TEMP: Step 1.4 - Replace aiModel with atom (with initialization from searchParams)
-  const [aiModel, setAiModel] = useAtom(aiModelAtom);
 
   // IMPORTANT: Clear chat messages immediately if this is a new session from home page
   // This prevents showing old messages during the initial render
@@ -206,7 +162,7 @@ function AISandboxPage() {
   const [showStyleSelector, setShowStyleSelector] = useAtom(showStyleSelectorAtom);
   const [selectedStyle, setSelectedStyle] = useAtom(selectedStyleAtom);
   
-  // TEMP: Step 1.3 - Replace generation useState with Jotai atoms
+  // Atoms - Generation
   const [showLoadingBackground, setShowLoadingBackground] = useAtom(showLoadingBackgroundAtom);
   const [urlScreenshot, setUrlScreenshot] = useAtom(urlScreenshotAtom);
   const [isScreenshotLoaded, setIsScreenshotLoaded] = useAtom(isScreenshotLoadedAtom);
@@ -214,60 +170,37 @@ function AISandboxPage() {
   const [screenshotError, setScreenshotError] = useAtom(screenshotErrorAtom);
   const [isPreparingDesign, setIsPreparingDesign] = useAtom(isPreparingDesignAtom);
   const [targetUrl, setTargetUrl] = useAtom(targetUrlAtom);
-  
-  // TEMP: Step 1.4 - Replace sidebarScrolled with atom
   const [sidebarScrolled, setSidebarScrolled] = useAtom(sidebarScrolledAtom);
   const [screenshotCollapsed, setScreenshotCollapsed] = useAtom(screenshotCollapsedAtom);
   const [loadingStage, setLoadingStage] = useAtom(loadingStageAtom);
   const [isStartingNewGeneration, setIsStartingNewGeneration] = useAtom(isStartingNewGenerationAtom);
-  
-  // TEMP: Step 1.1 - Replace sandboxFiles and fileStructure with atoms
   const [sandboxFiles, setSandboxFiles] = useAtom(sandboxFilesAtom);
   const [hasInitialSubmission, setHasInitialSubmission] = useAtom(hasInitialSubmissionAtom);
   const [fileStructure, setFileStructure] = useAtom(fileStructureAtom);
-  
-  // TEMP: Step 1.2 - Replace conversationContext with Jotai atom
   const [conversationContext, setConversationContext] = useAtom(conversationContextAtom);
+  const [codeApplicationState, setCodeApplicationState] = useAtom(codeApplicationStateAtom);
+  const [generationProgress, setGenerationProgress] = useAtom(generationProgressAtom);
+  const [shouldAutoGenerate, setShouldAutoGenerate] = useAtom(shouldAutoGenerateAtom);
+  const [pendingAutoSendMessage, setPendingAutoSendMessage] = useAtom(pendingAutoSendMessageAtom);
 
-  // TEMP: Step 3.1 - Changed to PreviewPaneRef for component usage
+  // Refs
   const previewPaneRef = useRef<PreviewPaneRef>(null);
-  // TEMP: Step 2.3 - Removed local chatMessagesRef, now using hook's ref
-  // const chatMessagesRef = useRef<HTMLDivElement>(null);
   const codeDisplayRef = useRef<HTMLDivElement>(null);
   const autoSendTriggeredRef = useRef<boolean>(false);
   
-  // TEMP: Step 2.1 - Use useSandbox hook
+  // Hooks
   const sandboxHook = useSandbox();
-  // Note: sandboxHook provides: createSandbox, checkSandboxStatus, fetchSandboxFiles,
-  // refreshIframe, updateStatus, log, addChatMessage, displayStructure
-
-  // TEMP: Step 2.2 - Use useCodeGeneration hook
   const codeGenerationHook = useCodeGeneration();
-  // Note: codeGenerationHook provides: applyGeneratedCode, captureUrlScreenshot, resetGenerationState,
-  // and various setters for generation-related state
-
-  // TEMP: Step 2.3 - Use useChatMessages hook
   const chatMessagesHook = useChatMessages({
     createSandbox: sandboxHook.createSandbox,
     applyGeneratedCode: codeGenerationHook.applyGeneratedCode,
   });
-  // Note: chatMessagesHook provides: sendChatMessage, handleAIChatSubmit,
-  // addChatMessage, clearChatMessages, chatMessagesRef, and state setters
 
   const {
     sendChatMessage,
     handleAIChatSubmit,
     chatMessagesRef,
-    // Note: chatMessages, aiChatInput already come from atoms, no need to extract
   } = chatMessagesHook;
-
-  // TEMP: Step 1.3 - Replace codeApplicationState and generationProgress with atoms
-  const [codeApplicationState, setCodeApplicationState] = useAtom(codeApplicationStateAtom);
-  const [generationProgress, setGenerationProgress] = useAtom(generationProgressAtom);
-
-  // TEMP: Step 1.3 - Replace auto-generation flags with atoms
-  const [shouldAutoGenerate, setShouldAutoGenerate] = useAtom(shouldAutoGenerateAtom);
-  const [pendingAutoSendMessage, setPendingAutoSendMessage] = useAtom(pendingAutoSendMessageAtom);
   // Auto-start generation if flagged
   useEffect(() => {
     const autoStart = sessionStorage.getItem('autoStart');
@@ -281,7 +214,7 @@ function AISandboxPage() {
     }
   }, [showHomeScreen, homeUrlInput]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // TEMP: Step 2.4 - Keep this: Sandbox status check (not in useInitialization)
+  // Check sandbox status on mount if needed
   useEffect(() => {
     // Only check sandbox status on mount if we don't already have sandboxData
     // AND we're not auto-starting a new generation (which would create a new sandbox)
@@ -297,86 +230,8 @@ function AISandboxPage() {
     }
   }, [chatMessages]);
 
-  // Extract functions from hooks for use in the component  // Use functions from useSandbox hook
+  // Extract functions from hooks
   const { updateStatus, log, addChatMessage, displayStructure, checkSandboxStatus, createSandbox, fetchSandboxFiles, refreshIframe } = sandboxHook;
-  
-  const handleSurfaceError = (_errors: any[]) => {
-    // Function kept for compatibility but Vite errors are now handled by template
-    
-    // Focus the input
-    const textarea = document.querySelector('textarea') as HTMLTextAreaElement;
-    if (textarea) {
-      textarea.focus();
-    }
-  };
-  
-  const installPackages = async (packages: string[]) => {
-    if (!sandboxData) {
-      addChatMessage('No active sandbox. Create a sandbox first!', 'system');
-      return;
-    }
-    
-    try {
-      const response = await fetch('/api/install-packages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ packages })
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Failed to install packages: ${response.statusText}`);
-      }
-      
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-      
-      while (reader) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n');
-        
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              
-              switch (data.type) {
-                case 'command':
-                  // Don't show npm install commands - they're handled by info messages
-                  if (!data.command.includes('npm install')) {
-                    addChatMessage(data.command, 'command', { commandType: 'input' });
-                  }
-                  break;
-                case 'output':
-                  addChatMessage(data.message, 'command', { commandType: 'output' });
-                  break;
-                case 'error':
-                  if (data.message && data.message !== 'undefined') {
-                    addChatMessage(data.message, 'command', { commandType: 'error' });
-                  }
-                  break;
-                case 'warning':
-                  addChatMessage(data.message, 'command', { commandType: 'output' });
-                  break;
-                case 'success':
-                  addChatMessage(`${data.message}`, 'system');
-                  break;
-                case 'status':
-                  addChatMessage(data.message, 'system');
-                  break;
-              }
-            } catch (e) {
-              console.error('Failed to parse SSE data:', e);
-            }
-          }
-        }
-      }
-    } catch (error: any) {
-      addChatMessage(`Failed to install packages: ${error.message}`, 'system');
-    }
-  };
 
   // Handle template setup - downloads template files and applies them to sandbox
   const handleTemplateSetup = async (templateName: string, projectTitle: string, userPrompt: string, newSandboxData?: SandboxData | null) => {
@@ -520,9 +375,7 @@ function AISandboxPage() {
     }
   };
 
-  // TEMP: Step 2.2 - Use applyGeneratedCode from useCodeGeneration hook
-  // TEMP: Step 3.1 - Removed iframeRef parameter since PreviewPane handles iframe internally
-  // The PreviewPane component manages its own iframe and refresh logic
+  // Wrap applyGeneratedCode for compatibility
   const applyGeneratedCode = async (code: string, isEdit: boolean = false, overrideSandboxData?: SandboxData) => {
     return codeGenerationHook.applyGeneratedCode(code, isEdit, overrideSandboxData);
   };
@@ -603,7 +456,7 @@ function AISandboxPage() {
               </button>
             </div>
             
-            {/* File Tree - TEMP: Step 3.3 - Use FileTreePanel component */}
+            {/* File Tree */}
             <div className="flex-1 overflow-y-auto scrollbar-hide">
               <FileTreePanel />
             </div>
@@ -640,7 +493,7 @@ function AISandboxPage() {
               </div>
             )}
             
-            {/* TEMP: Step 3.4 - Use CodeEditorPanel component */}
+            {/* Code Editor Panel */}
             <div className="flex-1 rounded-lg p-6 flex flex-col min-h-0 overflow-hidden">
               <div className="flex-1 overflow-y-auto min-h-0 scrollbar-hide" ref={codeDisplayRef}>
                 <CodeEditorPanel />
@@ -664,7 +517,6 @@ function AISandboxPage() {
         </div>
       );
     } else if (activeTab === 'preview') {
-      // TEMP: Step 3.1 - Use PreviewPane component
       return <PreviewPane ref={previewPaneRef} onScreenshotLoaded={() => setIsScreenshotLoaded(true)} />;
     } else if (activeTab === 'terminal') {
       // Terminal Tab Content
@@ -752,7 +604,6 @@ function AISandboxPage() {
   // Note: Individual CodeMirror editors handle their own internal scrolling
   // via the autoScroll prop when content changes
 
-  // TEMP: Keep getFileIcon for code editor header display (line 649)
   const getFileIcon = (fileName: string) => {
     const ext = fileName.split('.').pop()?.toLowerCase();
     
@@ -770,11 +621,6 @@ function AISandboxPage() {
   };
 
   const captureUrlScreenshot = codeGenerationHook.captureUrlScreenshot;
-
-  const handleHomeScreenSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    await startGeneration();
-  };
 
   const startGeneration = async () => {
     if (!homeUrlInput.trim()) return;
@@ -1426,16 +1272,7 @@ Focus on the key sections and content, making it clean and modern.`;
     }, 500);
   };
 
-  // TEMP: Step 2.4 - Use useInitialization hook
-  // This hook handles all initialization logic including:
-  // - AI model initialization from URL params
-  // - Template mode detection and setup
-  // - URL parameter processing
-  // - SessionStorage handling
-  // - Auto-generation triggers
-  // - Escape key handling
-  // - Screenshot capture
-  // - Auto-send chat messages
+  // Initialize page with all startup logic
   useInitialization({
     createSandbox: sandboxHook.createSandbox,
     fetchSandboxFiles: sandboxHook.fetchSandboxFiles,
@@ -1618,7 +1455,6 @@ Focus on the key sections and content, making it clean and modern.`;
             </div>
           )}
 
-          {/* TEMP: Step 3.2 - Use ChatPanel component */}
           <ChatPanel
             onSendMessage={sendChatMessage}
             aiChatInput={aiChatInput}
