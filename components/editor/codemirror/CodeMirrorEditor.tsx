@@ -102,6 +102,27 @@ export const CodeMirrorEditor = memo(
       themeRef.current = theme;
     });
 
+    /**
+     * Auto-scroll to bottom when content changes (for streaming code)
+     */
+    useEffect(() => {
+      if (!viewRef.current || !doc || editable) {
+        return;
+      }
+
+      // Scroll to the end of the document when content updates
+      const view = viewRef.current;
+      const docLength = view.state.doc.length;
+      
+      if (docLength > 0) {
+        requestAnimationFrame(() => {
+          view.dispatch({
+            effects: EditorView.scrollIntoView(docLength, { y: 'end', yMargin: 0 }),
+          });
+        });
+      }
+    }, [doc?.value, editable]);
+
     useEffect(() => {
       if (!viewRef.current || !doc) {
         return;
