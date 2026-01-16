@@ -11,7 +11,6 @@ import {
   highlightActiveLineGutter,
   keymap,
   lineNumbers,
-  scrollPastEnd,
 } from '@codemirror/view';
 import { memo, useEffect, useRef, useState, type MutableRefObject } from 'react';
 import { getTheme, reconfigureTheme } from './cm-theme';
@@ -90,6 +89,7 @@ export const CodeMirrorEditor = memo(
     const editorStatesRef = useRef<EditorStates | undefined>(undefined);
     const onScrollRef = useRef(onScroll);
     const onChangeRef = useRef(onChange);
+    const shouldAutoScrollRef = useRef(true);
 
     /**
      * This effect is used to avoid side effects directly in the render function
@@ -104,38 +104,25 @@ export const CodeMirrorEditor = memo(
 
     /**
      * Auto-scroll to bottom when content changes (for streaming code)
-     * This scrolls the CodeMirror editor itself, not the outer container
+     * Only scroll if the editor is already near the bottom to prevent flicker.
      */
     useEffect(() => {
-      if (!viewRef.current || !doc || editable) {
+      if (!viewRef.current || !doc || editable || !shouldAutoScrollRef.current) {
         return;
       }
 
-      // Scroll to the end of the document when content updates
       const view = viewRef.current;
       const docLength = view.state.doc.length;
-      
+
       if (docLength > 0) {
-        // Use setTimeout to ensure the DOM has updated
-        const timeoutId = setTimeout(() => {
+        requestAnimationFrame(() => {
           try {
-            // Scroll to the last character in the document
-            view.dispatch({
-              effects: EditorView.scrollIntoView(docLength, { 
-                y: 'end',
-                yMargin: 0 
-              }),
-            });
-            
-            // Also directly scroll the DOM element to ensure it works
             const scrollDOM = view.scrollDOM;
             scrollDOM.scrollTop = scrollDOM.scrollHeight;
           } catch (error) {
             console.error('Error scrolling CodeMirror:', error);
           }
-        }, 50);
-
-        return () => clearTimeout(timeoutId);
+        });
       }
     }, [doc?.value, editable]);
 
@@ -179,8 +166,18 @@ export const CodeMirrorEditor = memo(
       });
 
       viewRef.current = view;
+      const scrollContainer = view.scrollDOM;
+      const handleScroll = () => {
+        const threshold = 12;
+        shouldAutoScrollRef.current =
+          scrollContainer.scrollTop + scrollContainer.clientHeight >= scrollContainer.scrollHeight - threshold;
+      };
+
+      scrollContainer.addEventListener('scroll', handleScroll);
+      handleScroll();
 
       return () => {
+        scrollContainer.removeEventListener('scroll', handleScroll);
         viewRef.current?.destroy();
         viewRef.current = undefined;
       };
@@ -290,7 +287,6 @@ function newEditorState(
       }),
       closeBrackets(),
       lineNumbers(),
-      scrollPastEnd(),
       dropCursor(),
       drawSelection(),
       bracketMatching(),
@@ -353,10 +349,17 @@ function setEditorDocument(
     });
 
     requestAnimationFrame(() => {
+      const shouldApplyScroll =
+        typeof doc.scroll?.left === 'number' || typeof doc.scroll?.top === 'number';
+
+      if (!shouldApplyScroll) {
+        return;
+      }
+
       const currentLeft = view.scrollDOM.scrollLeft;
       const currentTop = view.scrollDOM.scrollTop;
-      const newLeft = doc.scroll?.left ?? 0;
-      const newTop = doc.scroll?.top ?? 0;
+      const newLeft = doc.scroll?.left ?? currentLeft;
+      const newTop = doc.scroll?.top ?? currentTop;
 
       const needsScrolling = currentLeft !== newLeft || currentTop !== newTop;
 
