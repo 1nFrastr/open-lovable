@@ -272,12 +272,6 @@ export async function POST(request: NextRequest) {
         
         // No keep-alive needed - sandbox provisioned for 10 minutes
         
-        // Check if we have a file manifest for edit mode
-        let editContext = null;
-        let enhancedSystemPrompt = '';
-        
-        // TODO: Re-implement edit mode handler as a separate module
-        
         // Build conversation context for system prompt
         let conversationContext = '';
         if (global.conversationState && global.conversationState.context.messages.length > 1) {
@@ -481,45 +475,6 @@ If the user says "remove X", you must:
 2. Edit that file to remove X
 3. DO NOT create any new files
 
-${editContext ? `
-TARGETED EDIT MODE ACTIVE
-- Edit Type: ${editContext.editIntent.type}
-- Confidence: ${editContext.editIntent.confidence}
-- Files to Edit: ${editContext.primaryFiles.join(', ')}
-
-🚨 CRITICAL RULE - VIOLATION WILL RESULT IN FAILURE 🚨
-YOU MUST ***ONLY*** GENERATE THE FILES LISTED ABOVE!
-
-ABSOLUTE REQUIREMENTS:
-1. COUNT the files in "Files to Edit" - that's EXACTLY how many files you must generate
-2. If "Files to Edit" shows ONE file, generate ONLY that ONE file
-3. DO NOT generate App.tsx unless it's EXPLICITLY listed in "Files to Edit"
-4. DO NOT generate ANY components that aren't listed in "Files to Edit"
-5. DO NOT "helpfully" update related files
-6. DO NOT fix unrelated issues you notice
-7. DO NOT improve code quality in files not being edited
-8. DO NOT add bonus features
-
-EXAMPLE VIOLATIONS (THESE ARE FAILURES):
-❌ User says "update the hero" → You update Hero, Header, Footer, and App.tsx
-❌ User says "change header color" → You redesign the entire header
-❌ User says "fix the button" → You update multiple components
-❌ Files to Edit shows "Hero.tsx" → You also generate App.tsx "to integrate it"
-❌ Files to Edit shows "Header.tsx" → You also update Footer.tsx "for consistency"
-
-CORRECT BEHAVIOR (THIS IS SUCCESS):
-✅ User says "update the hero" → You ONLY edit Hero.tsx with the requested change
-✅ User says "change header color" → You ONLY change the color in Header.tsx
-✅ User says "fix the button" → You ONLY fix the specific button issue
-✅ Files to Edit shows "Hero.tsx" → You generate ONLY Hero.tsx
-✅ Files to Edit shows "Header.tsx, Nav.tsx" → You generate EXACTLY 2 files: Header.tsx and Nav.tsx
-
-THE AI INTENT ANALYZER HAS ALREADY DETERMINED THE FILES.
-DO NOT SECOND-GUESS IT.
-DO NOT ADD MORE FILES.
-ONLY OUTPUT THE EXACT FILES LISTED IN "Files to Edit".
-` : ''}
-
 VIOLATION OF THESE RULES WILL RESULT IN FAILURE!
 ` : ''}
 
@@ -693,70 +648,52 @@ CRITICAL: When files are provided in the context:
           
           // Include current file contents from backend cache
           if (hasBackendFiles) {
-            // If we have edit context, use intelligent file selection
-            if (editContext && editContext.primaryFiles.length > 0) {
-              contextParts.push('\nEXISTING APPLICATION - TARGETED EDIT MODE');
-              contextParts.push(`\n${editContext.systemPrompt || enhancedSystemPrompt}\n`);
-              
-              // Get contents of primary and context files
-              const primaryFileContents = await getFileContents(editContext.primaryFiles, global.sandboxState!.fileCache!.manifest!);
-              const contextFileContents = await getFileContents(editContext.contextFiles, global.sandboxState!.fileCache!.manifest!);
-              
-              // Format files for AI
-              const formattedFiles = formatFilesForAI(primaryFileContents, contextFileContents);
-              contextParts.push(formattedFiles);
-              
-              contextParts.push('\nIMPORTANT: Only modify the files listed under "Files to Edit". The context files are provided for reference only.');
-            } else {
-              // Fallback to showing all files if no edit context
-              console.log('[generate-ai-code-stream] WARNING: Using fallback mode - no edit context available');
-              contextParts.push('\nEXISTING APPLICATION - TARGETED EDIT REQUIRED');
-              contextParts.push('\nYou MUST analyze the user request and determine which specific file(s) to edit.');
-              contextParts.push('\nCurrent project files (DO NOT regenerate all of these):');
-              
-              const fileEntries = Object.entries(backendFiles);
-              console.log(`[generate-ai-code-stream] Using backend cache: ${fileEntries.length} files`);
-              
-              // Show file list first for reference
-              contextParts.push('\n### File List:');
-              for (const [path] of fileEntries) {
-                contextParts.push(`- ${path}`);
-              }
-              
-              // Include ALL files as context in fallback mode
-              contextParts.push('\n### File Contents (ALL FILES FOR CONTEXT):');
-              for (const [path, fileData] of fileEntries) {
-                const content = fileData.content;
-                if (typeof content === 'string') {
-                  contextParts.push(`\n<file path="${path}">\n${content}\n</file>`);
-                }
-              }
-              
-              contextParts.push('\n🚨 CRITICAL INSTRUCTIONS - VIOLATION = FAILURE 🚨');
-              contextParts.push('1. Analyze the user request: "' + prompt + '"');
-              contextParts.push('2. Identify the MINIMUM number of files that need editing (usually just ONE)');
-              contextParts.push('3. PRESERVE ALL EXISTING CONTENT in those files');
-              contextParts.push('4. ONLY ADD/MODIFY the specific part requested');
-              contextParts.push('5. DO NOT regenerate entire components from scratch');
-              contextParts.push('6. DO NOT change unrelated parts of any file');
-              contextParts.push('7. Generate ONLY the files that MUST be changed - NO EXTRAS');
-              contextParts.push('\n⚠️ FILE COUNT RULE:');
-              contextParts.push('- Simple change (color, text, spacing) = 1 file ONLY');
-              contextParts.push('- Adding new component = 2 files MAX (new component + parent that imports it)');
-              contextParts.push('- DO NOT exceed these limits unless absolutely necessary');
-              contextParts.push('\nEXAMPLES OF CORRECT BEHAVIOR:');
-              contextParts.push('✅ "add a chart to the hero" → Edit ONLY Hero.tsx, ADD the chart, KEEP everything else');
-              contextParts.push('✅ "change header to black" → Edit ONLY Header.tsx, change ONLY the color');
-              contextParts.push('✅ "fix spacing in footer" → Edit ONLY Footer.tsx, adjust ONLY spacing');
-              contextParts.push('\nEXAMPLES OF FAILURES:');
-              contextParts.push('❌ "change header color" → You edit Header, Footer, and App "for consistency"');
-              contextParts.push('❌ "add chart to hero" → You regenerate the entire Hero component');
-              contextParts.push('❌ "fix button" → You update 5 different component files');
-              contextParts.push('\n⚠️ FINAL WARNING:');
-              contextParts.push('If you generate MORE files than necessary, you have FAILED');
-              contextParts.push('If you DELETE or REWRITE existing functionality, you have FAILED');
-              contextParts.push('ONLY change what was EXPLICITLY requested - NOTHING MORE');
+            contextParts.push('\nEXISTING APPLICATION - TARGETED EDIT REQUIRED');
+            contextParts.push('\nYou MUST analyze the user request and determine which specific file(s) to edit.');
+            contextParts.push('\nCurrent project files (DO NOT regenerate all of these):');
+            
+            const fileEntries = Object.entries(backendFiles);
+            console.log(`[generate-ai-code-stream] Using backend cache: ${fileEntries.length} files`);
+            
+            // Show file list first for reference
+            contextParts.push('\n### File List:');
+            for (const [path] of fileEntries) {
+              contextParts.push(`- ${path}`);
             }
+            
+            // Include ALL files as context
+            contextParts.push('\n### File Contents (ALL FILES FOR CONTEXT):');
+            for (const [path, fileData] of fileEntries) {
+              const content = fileData.content;
+              if (typeof content === 'string') {
+                contextParts.push(`\n<file path="${path}">\n${content}\n</file>`);
+              }
+            }
+            
+            contextParts.push('\n🚨 CRITICAL INSTRUCTIONS - VIOLATION = FAILURE 🚨');
+            contextParts.push('1. Analyze the user request: "' + prompt + '"');
+            contextParts.push('2. Identify the MINIMUM number of files that need editing (usually just ONE)');
+            contextParts.push('3. PRESERVE ALL EXISTING CONTENT in those files');
+            contextParts.push('4. ONLY ADD/MODIFY the specific part requested');
+            contextParts.push('5. DO NOT regenerate entire components from scratch');
+            contextParts.push('6. DO NOT change unrelated parts of any file');
+            contextParts.push('7. Generate ONLY the files that MUST be changed - NO EXTRAS');
+            contextParts.push('\n⚠️ FILE COUNT RULE:');
+            contextParts.push('- Simple change (color, text, spacing) = 1 file ONLY');
+            contextParts.push('- Adding new component = 2 files MAX (new component + parent that imports it)');
+            contextParts.push('- DO NOT exceed these limits unless absolutely necessary');
+            contextParts.push('\nEXAMPLES OF CORRECT BEHAVIOR:');
+            contextParts.push('✅ "add a chart to the hero" → Edit ONLY Hero.tsx, ADD the chart, KEEP everything else');
+            contextParts.push('✅ "change header to black" → Edit ONLY Header.tsx, change ONLY the color');
+            contextParts.push('✅ "fix spacing in footer" → Edit ONLY Footer.tsx, adjust ONLY spacing');
+            contextParts.push('\nEXAMPLES OF FAILURES:');
+            contextParts.push('❌ "change header color" → You edit Header, Footer, and App "for consistency"');
+            contextParts.push('❌ "add chart to hero" → You regenerate the entire Hero component');
+            contextParts.push('❌ "fix button" → You update 5 different component files');
+            contextParts.push('\n⚠️ FINAL WARNING:');
+            contextParts.push('If you generate MORE files than necessary, you have FAILED');
+            contextParts.push('If you DELETE or REWRITE existing functionality, you have FAILED');
+            contextParts.push('ONLY change what was EXPLICITLY requested - NOTHING MORE');
           } else if (context.currentFiles && Object.keys(context.currentFiles).length > 0) {
             // Fallback to frontend-provided files if backend cache is empty
             console.log('[generate-ai-code-stream] Warning: Backend cache empty, using frontend files');
@@ -1676,34 +1613,6 @@ Provide the complete file content without any truncation. Include all necessary 
           packagesToInstall: packagesToInstall.length > 0 ? packagesToInstall : undefined,
           warnings: truncationWarnings.length > 0 ? truncationWarnings : undefined
         });
-        
-        // Track edit in conversation history
-        if (isEdit && editContext && global.conversationState) {
-          const editRecord: ConversationEdit = {
-            timestamp: Date.now(),
-            userRequest: prompt,
-            editType: editContext.editIntent.type,
-            targetFiles: editContext.primaryFiles,
-            confidence: editContext.editIntent.confidence,
-            outcome: 'success' // Assuming success if we got here
-          };
-          
-          global.conversationState.context.edits.push(editRecord);
-          
-          // Track major changes
-          if (editContext.editIntent.type === 'ADD_FEATURE' || files.length > 3) {
-            global.conversationState.context.projectEvolution.majorChanges.push({
-              timestamp: Date.now(),
-              description: editContext.editIntent.description,
-              filesAffected: editContext.primaryFiles
-            });
-          }
-          
-          // Update last updated timestamp
-          global.conversationState.lastUpdated = Date.now();
-          
-          console.log('[generate-ai-code-stream] Updated conversation history with edit:', editRecord);
-        }
         
       } catch (error) {
         console.error('[generate-ai-code-stream] Stream processing error:', error);
