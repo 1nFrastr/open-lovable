@@ -199,6 +199,32 @@ export function useChatMessages(options: UseChatMessagesOptions) {
 
                 if (data.type === 'status') {
                   setGenerationProgress(prev => ({ ...prev, status: data.message }));
+                } else if (data.type === 'tool-call') {
+                  // Handle tool call events
+                  const toolIcons: Record<string, string> = {
+                    writeFile: '📝',
+                    installPackages: '📦'
+                  };
+                  const toolIcon = toolIcons[data.tool] || '🔧';
+                  
+                  let toolMessage = '';
+                  if (data.tool === 'writeFile') {
+                    toolMessage = `Writing file: ${data.args.path}`;
+                  } else if (data.tool === 'installPackages') {
+                    toolMessage = `Installing packages: ${data.args.packages.join(', ')}`;
+                  } else {
+                    toolMessage = `${data.tool}(${JSON.stringify(data.args)})`;
+                  }
+                  
+                  addChatMessage(
+                    `${toolIcon} ${toolMessage}`,
+                    'system',
+                    { 
+                      toolName: data.tool, 
+                      args: data.args,
+                      result: data.result 
+                    }
+                  );
                 } else if (data.type === 'thinking') {
                   setGenerationProgress(prev => ({
                     ...prev,
@@ -375,14 +401,17 @@ export function useChatMessages(options: UseChatMessagesOptions) {
                     });
                   }
 
-                  setGenerationProgress(prev => ({
-                    ...prev,
-                    status: `Generated ${parsedFiles.length > 0 ? parsedFiles.length : prev.files.length} file${(parsedFiles.length > 0 ? parsedFiles.length : prev.files.length) !== 1 ? 's' : ''}!`,
-                    isGenerating: false,
-                    isStreaming: false,
-                    isEdit: prev.isEdit,
-                    files: prev.files.length > 0 ? prev.files : parsedFiles
-                  }));
+                  setGenerationProgress(prev => {
+                    const fileCount = data.files || parsedFiles.length || prev.files.length;
+                    return {
+                      ...prev,
+                      status: `Generated ${fileCount} file${fileCount !== 1 ? 's' : ''}!`,
+                      isGenerating: false,
+                      isStreaming: false,
+                      isEdit: prev.isEdit,
+                      files: prev.files.length > 0 ? prev.files : parsedFiles
+                    };
+                  });
                 } else if (data.type === 'error') {
                   throw new Error(data.error);
                 }
@@ -403,16 +432,20 @@ export function useChatMessages(options: UseChatMessagesOptions) {
           generatedFiles.push(match[1]);
         }
 
+        // Get file count from generation progress or parsed files
+        // (tool calling mode may not have XML files in generatedCode)
+        const fileCount = generationProgress?.files?.length || generatedFiles.length;
+
         // Show appropriate message based on edit mode
         if (isEdit) {
           addChatMessage(
-            `Edit generated! Applying ${generatedFiles.length} file changes...`,
+            `Edit generated! Applying ${fileCount} file changes...`,
             'ai',
             { generatedCode }
           );
         } else {
           addChatMessage(
-            `Code generated! Applying ${generatedFiles.length} files to your sandbox...`,
+            `Code generated! Applying ${fileCount} files to your sandbox...`,
             'ai',
             { generatedCode }
           );

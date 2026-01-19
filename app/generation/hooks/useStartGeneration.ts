@@ -334,6 +334,88 @@ export function useStartGeneration({
                 
                 if (data.type === 'status') {
                   setGenerationProgress(prev => ({ ...prev, status: data.message }));
+                } else if (data.type === 'tool-call-start') {
+                  // Tool call is starting - show immediate feedback
+                  addChatMessage(
+                    data.message,
+                    'system',
+                    { 
+                      toolName: data.tool, 
+                      toolCallId: data.toolCallId,
+                      isStarting: true
+                    }
+                  );
+                  setGenerationProgress(prev => ({ 
+                    ...prev, 
+                    status: data.message,
+                    currentToolCall: {
+                      tool: data.tool,
+                      toolCallId: data.toolCallId,
+                      startTime: Date.now()
+                    }
+                  }));
+                } else if (data.type === 'tool-call-progress') {
+                  // Tool call arguments are being streamed
+                  if (data.tool === 'writeFile' && data.path) {
+                    // Update the message to show file path
+                    addChatMessage(
+                      data.message,
+                      'system',
+                      { 
+                        toolName: data.tool, 
+                        toolCallId: data.toolCallId,
+                        path: data.path,
+                        bytesWritten: data.bytesWritten
+                      }
+                    );
+                    setGenerationProgress(prev => ({ 
+                      ...prev, 
+                      status: data.message,
+                      currentFile: { path: data.path, content: '', type: 'javascript' }
+                    }));
+                  } else if (data.tool === 'installPackages' && data.package) {
+                    addChatMessage(
+                      data.message,
+                      'system',
+                      { 
+                        toolName: data.tool, 
+                        toolCallId: data.toolCallId,
+                        package: data.package
+                      }
+                    );
+                  }
+                } else if (data.type === 'tool-call-complete') {
+                  // Tool call finished
+                  setGenerationProgress(prev => ({ 
+                    ...prev, 
+                    currentToolCall: undefined
+                  }));
+                } else if (data.type === 'tool-call') {
+                  // Legacy: Handle tool call events (from onStepFinish)
+                  const toolIcons: Record<string, string> = {
+                    writeFile: '📝',
+                    installPackages: '📦'
+                  };
+                  const toolIcon = toolIcons[data.tool] || '🔧';
+                  
+                  let toolMessage = '';
+                  if (data.tool === 'writeFile') {
+                    toolMessage = `Writing file: ${data.args.path}`;
+                  } else if (data.tool === 'installPackages') {
+                    toolMessage = `Installing packages: ${data.args.packages.join(', ')}`;
+                  } else {
+                    toolMessage = `${data.tool}(${JSON.stringify(data.args)})`;
+                  }
+                  
+                  addChatMessage(
+                    `${toolIcon} ${toolMessage}`,
+                    'system',
+                    { 
+                      toolName: data.tool, 
+                      args: data.args,
+                      result: data.result 
+                    }
+                  );
                 } else if (data.type === 'thinking') {
                   setGenerationProgress(prev => ({ 
                     ...prev, 
@@ -365,6 +447,11 @@ export function useStartGeneration({
                 } else if (data.type === 'complete') {
                   generatedCode = data.generatedCode;
                   explanation = data.explanation;
+
+                  if (data.packagesToInstall && data.packagesToInstall.length > 0) {
+                    console.log('[generate-code] Packages to install from tools:', data.packagesToInstall);
+                    (window as any).pendingPackages = data.packagesToInstall;
+                  }
                   
                   setConversationContext(prev => ({
                     ...prev,

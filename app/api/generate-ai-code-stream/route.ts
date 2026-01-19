@@ -3,7 +3,8 @@ import { createGroq } from '@ai-sdk/groq';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
-import { streamText } from 'ai';
+import { streamText, tool } from 'ai';
+import { z } from 'zod';
 import type { SandboxState } from '@/types/sandbox';
 import { selectFilesForEdit, getFileContents, formatFilesForAI } from '@/lib/context-selector';
 import { executeSearchPlan, formatSearchResultsForAI, selectTargetFile } from '@/lib/file-search-executor';
@@ -104,6 +105,93 @@ export async function POST(request: NextRequest) {
     console.log('[generate-ai-code-stream] - context.sandboxId:', context?.sandboxId);
     console.log('[generate-ai-code-stream] - context.currentFiles:', context?.currentFiles ? Object.keys(context.currentFiles) : 'none');
     console.log('[generate-ai-code-stream] - currentFiles count:', context?.currentFiles ? Object.keys(context.currentFiles).length : 0);
+    
+    // Define tools for AI to interact with the sandbox
+    const tools: any = {
+      writeFile: tool({
+        description: 'Write or update a file in the sandbox. Use this to create new files or completely replace existing file content.',
+        inputSchema: z.object({
+          path: z.string().describe('File path, e.g., "src/components/Button.tsx"'),
+          content: z.string().describe('Complete file content to write')
+        }),
+        execute: async ({ path, content }: { path: string; content: string }) => {
+          console.log('[Tool Execute] writeFile called:', {
+            path,
+            contentLength: content?.length || 0,
+            hasContent: !!content,
+            contentPreview: content?.slice(0, 100)
+          });
+          
+          const provider = (global as any).activeSandboxProvider;
+          if (!provider) {
+            console.error('[Tool Execute] writeFile: No active sandbox provider');
+            return { success: false, error: 'No active sandbox' };
+          }
+          try {
+            await provider.writeFile(path, content);
+            console.log('[Tool Execute] writeFile success:', path);
+            
+            // Don't send progress here - wait for onStepFinish to maintain proper order
+            return {
+              success: true,
+              message: `File ${path} written successfully`,
+              path,
+              size: content.length
+            };
+          } catch (error) {
+            console.error('[Tool Execute] writeFile error:', error);
+            return {
+              success: false,
+              error: (error as Error).message,
+              path
+            };
+          }
+        },
+      }),
+
+      installPackages: tool({
+        description: 'Install npm packages in the sandbox. Use this BEFORE writing code that needs external dependencies.',
+        inputSchema: z.object({
+          packages: z.array(z.string()).describe('Array of package names, e.g., ["react-router-dom", "axios"]')
+        }),
+        execute: async ({ packages }: { packages: string[] }) => {
+          console.log('[Tool Execute] installPackages called:', {
+            packages,
+            packagesCount: packages?.length || 0
+          });
+          
+          const provider = (global as any).activeSandboxProvider;
+          if (!provider) {
+            console.error('[Tool Execute] installPackages: No active sandbox provider');
+            return { success: false, error: 'No active sandbox' };
+          }
+          try {
+            const result = await provider.installPackages(packages);
+            console.log('[Tool Execute] installPackages result:', {
+              success: result.exitCode === 0,
+              exitCode: result.exitCode,
+              packages
+            });
+            return {
+              success: result.exitCode === 0,
+              packages,
+              message: result.exitCode === 0
+                ? `Successfully installed: ${packages.join(', ')}`
+                : 'Installation failed',
+              stdout: result.stdout?.slice(0, 500), // Limit output length
+              stderr: result.stderr?.slice(0, 500)
+            };
+          } catch (error) {
+            console.error('[Tool Execute] installPackages error:', error);
+            return {
+              success: false,
+              error: (error as Error).message,
+              packages
+            };
+          }
+        },
+      }),
+    };
     
     // Initialize conversation state if not exists
     if (!global.conversationState) {
@@ -582,7 +670,40 @@ Remember: You are a SURGEON making a precise incision, not an artist repainting 
         }
         
         // Build system prompt with conversation awareness
-        let systemPrompt = `You are an expert React + TypeScript developer. Generate clean, CONCISE React code for Vite applications.
+        let systemPrompt = `🔧 AVAILABLE TOOLS:
+You have access to these tools to interact with the sandbox:
+
+1. **writeFile(path, content)** - Create or update files
+   - Use this for ALL file operations
+   - Replaces the old <file> XML tag format
+   - Path example: "src/components/Button.tsx"
+   - Content: Complete file content as a string
+
+2. **installPackages(packages[])** - Install npm packages
+   - Use this BEFORE writing code that needs external dependencies
+   - Replaces the old <package>/<packages> XML tags
+   - Example: installPackages(["react-router-dom", "axios"])
+
+TOOL USAGE WORKFLOW:
+- For multiple files: Call writeFile multiple times, one per file
+- For packages + code: Call installPackages first, then writeFile
+- Files are provided in context for your reference
+
+EXAMPLE WORKFLOW:
+User: "Add React Router navigation"
+Your approach:
+1. installPackages(["react-router-dom", "@types/react-router-dom"])
+2. writeFile("src/App.tsx", <updated App with Router>)
+3. writeFile("src/components/Navbar.tsx", <new Navbar component>)
+
+⚠️ IMPORTANT:
+- DO NOT use XML tags like <file>, <package> anymore
+- Use the tools instead - they are more reliable
+- You can see all existing files in the context provided
+
+---
+
+You are an expert React + TypeScript developer. Generate clean, CONCISE React code for Vite applications.
 
 🚨 CODE BREVITY IS CRITICAL - AVOID TOKEN LIMITS 🚨
 Your response may be truncated if too long. Follow these rules to keep code SHORT:
@@ -1134,6 +1255,12 @@ MORPH FAST APPLY MODE (EDIT-ONLY):
         console.log(`[generate-ai-code-stream] AI Gateway enabled: ${isUsingAIGateway}`);
         console.log(`[generate-ai-code-stream] Model string: ${model}`);
 
+        // Check if the current model supports tool calling
+        // Enable for OpenAI and Anthropic models (both support tool calling in AI SDK)
+        const supportsTools = isOpenAI || isAnthropic;
+        
+        console.log(`[generate-ai-code-stream] Tool calling ${supportsTools ? 'ENABLED' : 'DISABLED'} for this model (provider: ${isAnthropic ? 'Anthropic' : isGoogle ? 'Google' : isOpenAI ? 'OpenAI' : 'Groq'})`);
+        
         // Make streaming API call with appropriate provider
         const streamOptions: any = {
           model: modelProvider(actualModel),
@@ -1199,9 +1326,89 @@ It's better to have 3 complete files than 10 incomplete files.`
           ],
           maxTokens: 8192, // Reduce to ensure completion
           stopSequences: [] // Don't stop early
-          // Note: Neither Groq nor Anthropic models support tool/function calling in this context
-          // We use XML tags for package detection instead
         };
+        
+        // ✅ Enable tool calling only for supported models
+        if (supportsTools) {
+          console.log('[generate-ai-code-stream] Enabling tool calling with tools:', Object.keys(tools));
+          console.log('[generate-ai-code-stream] Tool calling mode for:', isAnthropic ? 'Anthropic Claude' : isOpenAI ? 'OpenAI GPT' : 'Unknown');
+          
+          streamOptions.tools = tools;
+          streamOptions.toolChoice = 'auto';  // AI automatically decides when to call tools
+          streamOptions.maxSteps = 5;  // Limit to 5 rounds of tool calling (conservative for MVP)
+          
+          // ✅ Tool call callback
+          streamOptions.onStepFinish = async (step: any) => {
+            console.log('[generate-ai-code-stream] onStepFinish called:', {
+              stepType: step.stepType,
+              finishReason: step.finishReason,
+              hasToolCalls: !!step.toolCalls,
+              toolCallsCount: step.toolCalls?.length || 0,
+              hasToolResults: !!step.toolResults,
+              toolResultsCount: step.toolResults?.length || 0
+            });
+            
+            if (step.toolCalls && step.toolCalls.length > 0) {
+              for (const toolCall of step.toolCalls) {
+                // AI SDK v6 uses 'input' not 'args'
+                console.log(`[Tool Call] ${toolCall.toolName}`, {
+                  toolCallId: toolCall.toolCallId,
+                  input: toolCall.input,
+                  hasInput: !!toolCall.input
+                });
+                
+                // Track files created via writeFile tool
+                if (toolCall.toolName === 'writeFile' && toolCall.input) {
+                  toolCalledFiles.push({
+                    path: toolCall.input.path,
+                    content: toolCall.input.content
+                  });
+                  console.log(`[generate-ai-code-stream] Tracked file from tool call: ${toolCall.input.path}`);
+                  
+                  // Send file write progress to frontend
+                  await sendProgress({
+                    type: 'file',
+                    action: 'write',
+                    path: toolCall.input.path,
+                    size: toolCall.input.content?.length || 0
+                  });
+                } else if (toolCall.toolName === 'installPackages' && toolCall.input) {
+                  // Send package install progress to frontend
+                  const packages = toolCall.input.packages || [];
+                  for (const pkg of packages) {
+                    if (!packagesToInstall.includes(pkg)) {
+                      packagesToInstall.push(pkg);
+                    }
+                    await sendProgress({
+                      type: 'package',
+                      name: pkg,
+                      message: `Installing package: ${pkg}`
+                    });
+                  }
+                }
+                
+                // Send tool call event to frontend (for debugging/logging)
+                await sendProgress({
+                  type: 'tool-call',
+                  tool: toolCall.toolName,
+                  args: toolCall.input,  // AI SDK v6: use 'input' not 'args'
+                  result: toolCall.result
+                });
+              }
+            }
+            
+            if (step.toolResults && step.toolResults.length > 0) {
+              console.log('[generate-ai-code-stream] Tool results:', step.toolResults.map((r: any) => ({
+                toolName: r.toolName,
+                toolCallId: r.toolCallId,
+                hasResult: !!r.result,
+                resultPreview: r.result 
+                  ? (typeof r.result === 'string' ? r.result.slice(0, 100) : JSON.stringify(r.result).slice(0, 100))
+                  : 'no result'
+              })));
+            }
+          };
+        }
         
         // Add temperature for non-reasoning models
         if (!model.startsWith('openai/gpt-5')) {
@@ -1227,6 +1434,9 @@ It's better to have 3 complete files than 10 incomplete files.`
         let conversationalBuffer = '';
         let tagBuffer = '';
         let continuationCount = 0;
+        
+        // Track files created via tool calls (when not using XML format)
+        const toolCalledFiles: Array<{ path: string; content: string }> = [];
         
         // Message history for continuation
         const conversationMessages: Array<{ role: 'system' | 'user' | 'assistant', content: string }> = [
@@ -1297,114 +1507,247 @@ It's better to have 3 complete files than 10 incomplete files.`
           // Track content generated in this segment
           let segmentContent = '';
           
-          // Stream the response and parse for packages in real-time
-          for await (const textPart of result?.textStream || []) {
-            const text = textPart || '';
-            generatedCode += text;
-            segmentContent += text;
-            currentFile += text;
-            
-            // Combine with buffer for tag detection
-            const searchText = tagBuffer + text;
-            
-            // Log streaming chunks to console
-            process.stdout.write(text);
-            
-            // Check if we're entering or leaving a tag
-            const hasOpenTag = /<(file|package|packages|explanation|command|structure|template)\b/.test(text);
-            const hasCloseTag = /<\/(file|package|packages|explanation|command|structure|template)>/.test(text);
-            
-            if (hasOpenTag) {
-              // Send any buffered conversational text before the tag
-              if (conversationalBuffer.trim() && !isInTag) {
-                await sendProgress({ 
-                  type: 'conversation', 
-                  text: conversationalBuffer.trim()
-                });
-                conversationalBuffer = '';
-              }
-              isInTag = true;
-            }
-            
-            if (hasCloseTag) {
-              isInTag = false;
-            }
-            
-            // If we're not in a tag and text doesn't contain any XML tags, buffer as conversational text
-            if (!isInTag && !hasOpenTag && !hasCloseTag) {
-              conversationalBuffer += text;
-            }
-            
-            // Stream the raw text for live preview
-            await sendProgress({ 
-              type: 'stream', 
-              text: text,
-              raw: true 
-            });
-            
-            // Debug: Log every 100 characters streamed
-            if (generatedCode.length % 100 < text.length) {
-              console.log(`[generate-ai-code-stream] Streamed ${generatedCode.length} chars`);
-            }
-            
-            // Check for package tags in buffered text (ONLY for edits, not initial generation)
-            let lastIndex = 0;
-            if (isEdit) {
-              const packageRegex = /<package>([^<]+)<\/package>/g;
-              let packageMatch;
+          // Track current tool call for streaming tool arguments
+          let currentToolCall: { toolName: string; toolCallId: string; argsText: string } | null = null;
+          
+          // Stream the response using fullStream to capture tool call events
+          for await (const chunk of result?.fullStream || []) {
+            // Handle different chunk types from fullStream
+            if (chunk.type === 'text-delta') {
+              // Text content streaming (same as before)
+              const text = chunk.text || '';
+              generatedCode += text;
+              segmentContent += text;
+              currentFile += text;
               
-              while ((packageMatch = packageRegex.exec(searchText)) !== null) {
-                const packageName = packageMatch[1].trim();
-                if (packageName && !packagesToInstall.includes(packageName)) {
-                  packagesToInstall.push(packageName);
-                  console.log(`[generate-ai-code-stream] Package detected: ${packageName}`);
+              // Combine with buffer for tag detection
+              const searchText = tagBuffer + text;
+              
+              // Log streaming chunks to console
+              process.stdout.write(text);
+              
+              // Check if we're entering or leaving a tag
+              const hasOpenTag = /<(file|package|packages|explanation|command|structure|template)\b/.test(text);
+              const hasCloseTag = /<\/(file|package|packages|explanation|command|structure|template)>/.test(text);
+              
+              if (hasOpenTag) {
+                // Send any buffered conversational text before the tag
+                if (conversationalBuffer.trim() && !isInTag) {
                   await sendProgress({ 
-                    type: 'package', 
-                    name: packageName,
-                    message: `Package detected: ${packageName}`
+                    type: 'conversation', 
+                    text: conversationalBuffer.trim()
+                  });
+                  conversationalBuffer = '';
+                }
+                isInTag = true;
+              }
+              
+              if (hasCloseTag) {
+                isInTag = false;
+              }
+              
+              // If we're not in a tag and text doesn't contain any XML tags, buffer as conversational text
+              if (!isInTag && !hasOpenTag && !hasCloseTag) {
+                conversationalBuffer += text;
+              }
+              
+              // Stream the raw text for live preview
+              await sendProgress({ 
+                type: 'stream', 
+                text: text,
+                raw: true 
+              });
+              
+              // Debug: Log every 100 characters streamed
+              if (generatedCode.length % 100 < text.length) {
+                console.log(`[generate-ai-code-stream] Streamed ${generatedCode.length} chars`);
+              }
+              
+              // Check for package tags in buffered text (ONLY for edits, not initial generation)
+              let lastIndex = 0;
+              if (isEdit) {
+                const packageRegex = /<package>([^<]+)<\/package>/g;
+                let packageMatch;
+                
+                while ((packageMatch = packageRegex.exec(searchText)) !== null) {
+                  const packageName = packageMatch[1].trim();
+                  if (packageName && !packagesToInstall.includes(packageName)) {
+                    packagesToInstall.push(packageName);
+                    console.log(`[generate-ai-code-stream] Package detected: ${packageName}`);
+                    await sendProgress({ 
+                      type: 'package', 
+                      name: packageName,
+                      message: `Package detected: ${packageName}`
+                    });
+                  }
+                  lastIndex = packageMatch.index + packageMatch[0].length;
+                }
+              }
+              
+              // Keep unmatched portion in buffer for next iteration
+              tagBuffer = searchText.substring(Math.max(0, lastIndex - 50)); // Keep last 50 chars
+              
+              // Check for file boundaries
+              if (text.includes('<file path="')) {
+                const pathMatch = text.match(/<file path="([^"]+)"/);
+                if (pathMatch) {
+                  currentFilePath = pathMatch[1];
+                  isInFile = true;
+                  currentFile = text;
+                }
+              }
+              
+              // Check for file end
+              if (isInFile && currentFile.includes('</file>')) {
+                isInFile = false;
+                
+                // Send component progress update
+                if (currentFilePath.includes('components/')) {
+                  componentCount++;
+                  const componentName = currentFilePath.split('/').pop()?.replace('.tsx', '') || 'Component';
+                  await sendProgress({ 
+                    type: 'component', 
+                    name: componentName,
+                    path: currentFilePath,
+                    index: componentCount
+                  });
+                } else if (currentFilePath.includes('App.tsx')) {
+                  await sendProgress({ 
+                    type: 'app', 
+                    message: 'Generated main App.tsx',
+                    path: currentFilePath
                   });
                 }
-                lastIndex = packageMatch.index + packageMatch[0].length;
+                
+                currentFile = '';
+                currentFilePath = '';
               }
-            }
-            
-            // Keep unmatched portion in buffer for next iteration
-            tagBuffer = searchText.substring(Math.max(0, lastIndex - 50)); // Keep last 50 chars
-            
-            // Check for file boundaries
-            if (text.includes('<file path="')) {
-              const pathMatch = text.match(/<file path="([^"]+)"/);
-              if (pathMatch) {
-                currentFilePath = pathMatch[1];
-                isInFile = true;
-                currentFile = text;
-              }
-            }
-            
-            // Check for file end
-            if (isInFile && currentFile.includes('</file>')) {
-              isInFile = false;
+            } else if (chunk.type === 'tool-call') {
+              // Tool call started - immediately notify frontend
+              console.log(`[generate-ai-code-stream] Tool call started: ${chunk.toolName}`, {
+                toolCallId: chunk.toolCallId
+              });
               
-              // Send component progress update
-              if (currentFilePath.includes('components/')) {
-                componentCount++;
-                const componentName = currentFilePath.split('/').pop()?.replace('.tsx', '') || 'Component';
-                await sendProgress({ 
-                  type: 'component', 
-                  name: componentName,
-                  path: currentFilePath,
-                  index: componentCount
-                });
-              } else if (currentFilePath.includes('App.tsx')) {
-                await sendProgress({ 
-                  type: 'app', 
-                  message: 'Generated main App.tsx',
-                  path: currentFilePath
-                });
-              }
+              // Initialize current tool call tracking
+              currentToolCall = {
+                toolName: chunk.toolName,
+                toolCallId: chunk.toolCallId,
+                argsText: ''
+              };
               
-              currentFile = '';
-              currentFilePath = '';
+              // Send immediate notification that tool is being called
+              await sendProgress({
+                type: 'tool-call-start',
+                tool: chunk.toolName,
+                toolCallId: chunk.toolCallId,
+                message: chunk.toolName === 'writeFile' 
+                  ? '📝 Writing file...' 
+                  : chunk.toolName === 'installPackages'
+                    ? '📦 Installing packages...'
+                    : `🔧 Calling ${chunk.toolName}...`
+              });
+            } else if (chunk.type === 'tool-input-start') {
+              // Tool call argument streaming started
+              console.log(`[generate-ai-code-stream] Tool argument streaming started: ${chunk.toolName}`);
+              
+              currentToolCall = {
+                toolName: chunk.toolName,
+                toolCallId: chunk.id, // AI SDK v6 uses 'id' not 'toolCallId'
+                argsText: ''
+              };
+              
+              // Send notification that tool call is starting
+              await sendProgress({
+                type: 'tool-call-start',
+                tool: chunk.toolName,
+                toolCallId: chunk.id,
+                message: chunk.toolName === 'writeFile' 
+                  ? '📝 Writing file...' 
+                  : chunk.toolName === 'installPackages'
+                    ? '📦 Installing packages...'
+                    : `🔧 Calling ${chunk.toolName}...`
+              });
+            } else if (chunk.type === 'tool-input-delta') {
+              // Tool call arguments being streamed
+              if (currentToolCall) {
+                currentToolCall.argsText += chunk.delta || ''; // AI SDK v6 uses 'delta' not 'inputTextDelta'
+                
+                // Try to extract file path from partial args for writeFile
+                if (currentToolCall.toolName === 'writeFile') {
+                  // Try to parse partial JSON to get the path
+                  const pathMatch = currentToolCall.argsText.match(/"path"\s*:\s*"([^"]+)"/);
+                  if (pathMatch && !currentToolCall.argsText.includes('__pathSent')) {
+                    // Mark that we've sent the path to avoid duplicates
+                    currentToolCall.argsText += '__pathSent';
+                    
+                    await sendProgress({
+                      type: 'tool-call-progress',
+                      tool: 'writeFile',
+                      toolCallId: currentToolCall.toolCallId,
+                      path: pathMatch[1],
+                      message: `📝 Writing file: ${pathMatch[1]}`
+                    });
+                  }
+                  
+                  // Stream content length updates periodically
+                  const contentMatch = currentToolCall.argsText.match(/"content"\s*:\s*"([\s\S]*)/);
+                  if (contentMatch) {
+                    const contentLength = contentMatch[1].length;
+                    // Send progress every ~500 chars
+                    if (contentLength % 500 < 10) {
+                      await sendProgress({
+                        type: 'tool-call-progress',
+                        tool: 'writeFile',
+                        toolCallId: currentToolCall.toolCallId,
+                        bytesWritten: contentLength,
+                        message: `Writing... ${Math.round(contentLength / 1024 * 10) / 10}KB`
+                      });
+                    }
+                  }
+                } else if (currentToolCall.toolName === 'installPackages') {
+                  // Try to extract packages list
+                  const packagesMatch = currentToolCall.argsText.match(/"packages"\s*:\s*\[([\s\S]*)/);
+                  if (packagesMatch) {
+                    // Extract individual package names as they appear
+                    const pkgMatches = packagesMatch[1].matchAll(/"([^"]+)"/g);
+                    for (const match of pkgMatches) {
+                      const pkg = match[1];
+                      if (!packagesToInstall.includes(pkg)) {
+                        packagesToInstall.push(pkg);
+                        await sendProgress({
+                          type: 'tool-call-progress',
+                          tool: 'installPackages',
+                          toolCallId: currentToolCall.toolCallId,
+                          package: pkg,
+                          message: `📦 Will install: ${pkg}`
+                        });
+                      }
+                    }
+                  }
+                }
+              }
+            } else if (chunk.type === 'tool-result') {
+              // Tool execution completed
+              console.log(`[generate-ai-code-stream] Tool result received: ${chunk.toolName}`);
+              
+              await sendProgress({
+                type: 'tool-call-complete',
+                tool: chunk.toolName,
+                toolCallId: chunk.toolCallId,
+                result: chunk.output // AI SDK v6 uses 'output' not 'result'
+              });
+              
+              // Reset current tool call tracking
+              currentToolCall = null;
+            } else if (chunk.type === 'reasoning-delta') {
+              // Extended thinking/reasoning (for models that support it)
+              await sendProgress({
+                type: 'thinking',
+                text: chunk.text || '' // AI SDK v6 uses 'text' not 'textDelta' for reasoning-delta
+              });
+            } else if (chunk.type === 'finish') {
+              // Stream finished
+              console.log(`[generate-ai-code-stream] Stream finished: ${chunk.finishReason}`);
             }
           }
           
@@ -1412,7 +1755,18 @@ It's better to have 3 complete files than 10 incomplete files.`
           const finishReason = await result?.finishReason;
           const usage = await result?.usage;
           
-          console.log(`\n[generate-ai-code-stream] Segment ${continuationCount + 1} complete. Finish reason: ${finishReason}, tokens: ${usage?.totalTokens || 'unknown'}`);
+          console.log(`\n[generate-ai-code-stream] Segment ${continuationCount + 1} complete:`, {
+            finishReason,
+            tokens: usage?.totalTokens || 'unknown',
+            segmentLength: segmentContent.length,
+            totalLength: generatedCode.length
+          });
+          
+          // Special logging for tool-calls finish reason
+          if (finishReason === 'tool-calls') {
+            console.log('[generate-ai-code-stream] ⚠️  Finish reason is "tool-calls" - tools were called but response may not contain file content in XML format');
+            console.log('[generate-ai-code-stream] Tool calling is working, but files may need to be retrieved from tool results instead of generated text');
+          }
           
           // Check if response was truncated due to token limit
           if (finishReason === 'length' && continuationCount < MAX_RESPONSE_SEGMENTS) {
@@ -1594,6 +1948,46 @@ It's better to have 3 complete files than 10 incomplete files.`
               message: 'Generated main App.tsx',
               path: filePath
             });
+          }
+        }
+        
+        // If no files were parsed from XML format (tool calling mode), use toolCalledFiles
+        if (files.length === 0 && toolCalledFiles.length > 0) {
+          console.log(`[generate-ai-code-stream] No XML files found, using ${toolCalledFiles.length} files from tool calls`);
+          files.push(...toolCalledFiles);
+          
+          // Extract packages from tool-called files
+          for (const file of toolCalledFiles) {
+            const filePackages = extractPackagesFromCode(file.content);
+            for (const pkg of filePackages) {
+              if (!packagesToInstall.includes(pkg)) {
+                packagesToInstall.push(pkg);
+                console.log(`[generate-ai-code-stream] Package detected from tool-called file: ${pkg}`);
+                await sendProgress({ 
+                  type: 'package', 
+                  name: pkg,
+                  message: `Package detected: ${pkg}`
+                });
+              }
+            }
+            
+            // Send progress for each file
+            if (file.path.includes('components/')) {
+              componentCount++;
+              const componentName = file.path.split('/').pop()?.replace('.tsx', '') || 'Component';
+              await sendProgress({ 
+                type: 'component', 
+                name: componentName,
+                path: file.path,
+                index: componentCount
+              });
+            } else if (file.path.includes('App.tsx')) {
+              await sendProgress({ 
+                type: 'app', 
+                message: 'Generated main App.tsx',
+                path: file.path
+              });
+            }
           }
         }
         
@@ -1797,6 +2191,16 @@ Provide the complete file content without any truncation. Include all necessary 
             });
           }
         }
+        
+        // Log final generation summary
+        console.log('[generate-ai-code-stream] Generation complete:', {
+          generatedCodeLength: generatedCode.length,
+          filesCount: files.length,
+          filesList: files.map(f => f.path),
+          componentsCount: componentCount,
+          packagesCount: packagesToInstall.length,
+          hasWarnings: truncationWarnings.length > 0
+        });
         
         // Send completion with packages info
         await sendProgress({ 

@@ -13,6 +13,16 @@ export interface ChatMessage {
     commandType?: 'input' | 'output' | 'error' | 'success';
     brandingData?: any;
     sourceUrl?: string;
+    // Tool calling metadata
+    toolName?: string;
+    toolCallId?: string;
+    args?: any;
+    result?: any;
+    // Tool call streaming metadata
+    isStarting?: boolean;
+    path?: string;
+    bytesWritten?: number;
+    package?: string;
   };
 }
 
