@@ -76,6 +76,7 @@
     "clsx": "^2.1.1",
     "copy-to-clipboard": "^3.3.3",
     "cors": "^2.8.5",
+    "diff": "^5.2.0",
     "dotenv": "^17.2.1",
     "framer-motion": "^12.23.12",
     "jotai": "^2.14.0",
@@ -102,6 +103,7 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
+    "@types/diff": "^5.2.0",
     "@types/lodash-es": "^4.17.12",
     "@types/node": "^20",
     "@types/react": "^19",

@@ -1,11 +1,12 @@
 import { tool } from 'ai';
 import { z } from 'zod';
+import { replace, generateDiff, calculateDiffStats, normalizeLineEndings } from './edit-file';
 
 /**
  * Sandbox Tools Module
  * 
  * Defines AI tools for interacting with the sandbox environment.
- * These tools allow the AI to write files and install packages.
+ * These tools allow the AI to write files, edit files, and install packages.
  */
 
 export interface ToolResult {
@@ -22,8 +23,108 @@ export interface ToolResult {
  */
 export function createSandboxTools(): Record<string, any> {
   return {
+    editFile: tool({
+      description: 'Edit a file by replacing a specific string with new content. Use this for incremental updates and partial replacements. This is more efficient than writeFile for small changes.',
+      inputSchema: z.object({
+        path: z.string().describe('File path, e.g., "src/components/Button.tsx"'),
+        oldString: z.string().describe('The exact text to replace. Must be unique in the file or provide enough context to identify the match.'),
+        newString: z.string().describe('The new text to replace it with (must be different from oldString)'),
+        replaceAll: z.boolean().optional().describe('Replace all occurrences of oldString (default: false). Use when renaming variables or making bulk changes.')
+      }),
+      execute: async ({ path, oldString, newString, replaceAll }: { 
+        path: string; 
+        oldString: string; 
+        newString: string; 
+        replaceAll?: boolean 
+      }): Promise<ToolResult> => {
+        console.log('[Tool Execute] editFile called:', {
+          path,
+          oldStringLength: oldString?.length || 0,
+          newStringLength: newString?.length || 0,
+          replaceAll: replaceAll || false
+        });
+        
+        const provider = (global as any).activeSandboxProvider;
+        if (!provider) {
+          console.error('[Tool Execute] editFile: No active sandbox provider');
+          return { success: false, error: 'No active sandbox' };
+        }
+
+        // Validation
+        if (oldString === newString) {
+          return { 
+            success: false, 
+            error: 'oldString and newString must be different',
+            path 
+          };
+        }
+        
+        try {
+          // Read existing file content
+          let oldContent: string;
+          try {
+            oldContent = await provider.readFile(path);
+          } catch (readError) {
+            return { 
+              success: false, 
+              error: `File not found: ${path}`,
+              path 
+            };
+          }
+
+          // Apply replacement using intelligent matching strategies
+          let newContent: string;
+          try {
+            newContent = replace(normalizeLineEndings(oldContent), oldString, newString, replaceAll || false);
+          } catch (replaceError) {
+            const errorMessage = (replaceError as Error).message;
+            return { 
+              success: false, 
+              error: errorMessage,
+              path,
+              suggestion: errorMessage.includes('multiple matches') 
+                ? 'Provide more surrounding context in oldString to uniquely identify the match, or set replaceAll: true'
+                : errorMessage.includes('not found')
+                ? 'The oldString was not found. Verify the exact content including whitespace and indentation.'
+                : undefined
+            };
+          }
+
+          // Write updated content back to file
+          await provider.writeFile(path, newContent);
+          
+          // Generate diff for display
+          const diff = generateDiff(path, oldContent, newContent);
+          const stats = calculateDiffStats(oldContent, newContent);
+          
+          console.log('[Tool Execute] editFile success:', {
+            path,
+            additions: stats.additions,
+            deletions: stats.deletions
+          });
+          
+          return {
+            success: true,
+            message: `File ${path} edited successfully`,
+            path,
+            diff,
+            additions: stats.additions,
+            deletions: stats.deletions,
+            size: newContent.length
+          };
+        } catch (error) {
+          console.error('[Tool Execute] editFile error:', error);
+          return {
+            success: false,
+            error: (error as Error).message,
+            path
+          };
+        }
+      },
+    }),
+
     writeFile: tool({
-      description: 'Write or update a file in the sandbox. Use this to create new files or completely replace existing file content.',
+      description: 'Write or update a file in the sandbox. Use this to create new files or completely replace existing file content. For small changes, prefer editFile instead.',
       inputSchema: z.object({
         path: z.string().describe('File path, e.g., "src/components/Button.tsx"'),
         content: z.string().describe('Complete file content to write')

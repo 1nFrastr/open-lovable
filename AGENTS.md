@@ -3,7 +3,7 @@
 This is a **workspace project** with the following structure:
 
 - **Main Project**: `openlovable/` - This is the primary project to build and modify
-- **Reference Projects**: `bolt.diy/` and potentially other AI-generated projects in the future
+- **Reference Projects**: `bolt.diy/` and `opencode-1/` and potentially other AI-generated projects in the future
 
 ## Purpose
 The goal is to study and reference different AI-generated projects to improve and build Open Lovable. Only the `openlovable/` code should be modified. All reference projects are **read-only** - use them for learning, comparison, and inspiration only.
