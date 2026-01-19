@@ -7,7 +7,6 @@ import { streamText, tool } from 'ai';
 import { z } from 'zod';
 import type { SandboxState } from '@/types/sandbox';
 import { getFileContents, formatFilesForAI } from '@/lib/context-selector';
-import type { FileManifest } from '@/types/file-manifest';
 import type { ConversationState, ConversationMessage, ConversationEdit } from '@/types/conversation';
 import { appConfig } from '@/config/app.config';
 import { 
@@ -580,18 +579,7 @@ APP CREATION RULES:
 
 SCRAPED CONTENT: Sanitize quotes - use double quotes for text with apostrophes.
 
-CODE GENERATION FORMAT:
-Use this XML format (NEVER create config files - they exist):
-
-<file path="src/App.tsx">
-// Main app - keep simple apps in ONE file
-</file>
-
-<file path="src/components/Name.tsx">
-// Only if component is complex or reused
-</file>
-
-COMPLETION: Generate ALL files in ONE response. Never say "I'll continue later".
+IMPORTANT: NEVER create config files - they already exist (vite.config.ts, tailwind.config.js, package.json)!
 
 USER INTENT:
 - "add X" / "update X" / "fix X" → Modify ONLY the specific feature/file
@@ -620,24 +608,6 @@ CRITICAL: When files are provided in the context:
 3. Generate ONLY the files that need changes
 4. Do NOT ask to see files - they are already provided in the context above
 5. Make the requested change immediately`;
-
-        // If Morph Fast Apply is enabled (edit mode + MORPH_API_KEY), force <edit> block output
-        const morphFastApplyEnabled = Boolean(isEdit && process.env.MORPH_API_KEY);
-        if (morphFastApplyEnabled) {
-          systemPrompt += `
-
-MORPH FAST APPLY MODE (EDIT-ONLY):
-- Output edits as <edit> blocks, not full <file> blocks, for files that already exist.
-- Format for each edit:
-  <edit target_file="src/components/Header.tsx">
-    <instructions>Describe the minimal change, single sentence.</instructions>
-    <update>Provide the SMALLEST code snippet necessary to perform the change.</update>
-  </edit>
-- Only use <file> blocks when you must CREATE a brand-new file.
-- Prefer ONE edit block for a simple change; multiple edits only if absolutely needed for separate files.
-- Keep updates minimal and precise; do not rewrite entire files.
-`;
-        }
 
         // Build full prompt with context
         let fullPrompt = prompt;
@@ -809,17 +779,16 @@ MORPH FAST APPLY MODE (EDIT-ONLY):
             contextParts.push('DO NOT regenerate App.tsx, index.css, or other core files unless explicitly requested.');
             contextParts.push('ONLY create or modify the specific files needed for the user\'s request.');
             contextParts.push('\n⚠️ CRITICAL FILE OUTPUT FORMAT - VIOLATION = FAILURE:');
-            contextParts.push('YOU MUST OUTPUT EVERY FILE IN THIS EXACT XML FORMAT:');
-            contextParts.push('<file path="src/components/ComponentName.tsx">');
-            contextParts.push('// Complete file content here');
-            contextParts.push('</file>');
-            contextParts.push('<file path="src/index.css">');
-            contextParts.push('/* CSS content here */');
-            contextParts.push('</file>');
-            contextParts.push('\n❌ NEVER OUTPUT: "Generated Files: index.css, App.tsx"');
-            contextParts.push('❌ NEVER LIST FILE NAMES WITHOUT CONTENT');
-            contextParts.push('✅ ALWAYS: One <file> tag per file with COMPLETE content');
-            contextParts.push('✅ ALWAYS: Include EVERY file you modified');
+            contextParts.push('YOU MUST use writeFile() tool calls for EVERY file:');
+            contextParts.push('');
+            contextParts.push('Example:');
+            contextParts.push('writeFile("src/components/ComponentName.tsx", <complete file content>)');
+            contextParts.push('writeFile("src/index.css", <complete CSS content>)');
+            contextParts.push('');
+            contextParts.push('❌ NEVER just list filenames or describe changes');
+            contextParts.push('❌ NEVER output partial/incomplete file content');
+            contextParts.push('✅ ALWAYS: Call writeFile() for EVERY file with COMPLETE content');
+            contextParts.push('✅ ALWAYS: Include EVERY line of each file you modify');
           } else if (!hasBackendFiles) {
             // First generation mode - make it beautiful!
             contextParts.push('\n🎨 FIRST GENERATION MODE - CREATE SOMETHING BEAUTIFUL!');
@@ -831,7 +800,7 @@ MORPH FAST APPLY MODE (EDIT-ONLY):
             contextParts.push('5. **STANDARD CLASSES** - bg-white, text-gray-900, bg-blue-500, NOT bg-background');
             contextParts.push('\nCreate a polished, professional application that works perfectly on first load.');
             contextParts.push('\n⚠️ OUTPUT FORMAT:');
-            contextParts.push('Use <file path="...">content</file> tags for EVERY file');
+            contextParts.push('Use writeFile() tool calls for EVERY file');
             contextParts.push('NEVER output "Generated Files:" as plain text');
           }
           
@@ -858,17 +827,6 @@ MORPH FAST APPLY MODE (EDIT-ONLY):
           }
           
           if (contextParts.length > 0) {
-            if (morphFastApplyEnabled) {
-              contextParts.push('\nOUTPUT FORMAT (REQUIRED IN MORPH MODE):');
-              contextParts.push('<edit target_file="src/components/Component.tsx">');
-              contextParts.push('<instructions>Minimal, precise instruction.</instructions>');
-              contextParts.push('<update>// Smallest necessary snippet</update>');
-              contextParts.push('</edit>');
-              contextParts.push('\nIf you need to create a NEW file, then and only then output a full file:');
-              contextParts.push('<file path="src/components/NewComponent.tsx">');
-              contextParts.push('// Full file content when creating new files');
-              contextParts.push('</file>');
-            }
             fullPrompt = `CONTEXT:\n${contextParts.join('\n')}\n\nUSER REQUEST:\n${prompt}`;
           }
         }
@@ -962,21 +920,14 @@ REMEMBER: It's better to generate fewer COMPLETE files than many INCOMPLETE file
               role: 'user', 
               content: fullPrompt + `
 
-CRITICAL: You MUST complete EVERY file you start. If you write:
-<file path="src/components/Hero.tsx">
+CRITICAL: You MUST provide COMPLETE file content when calling writeFile().
 
-You MUST include the closing </file> tag and ALL the code in between.
-
-NEVER write partial code like:
-<h1>Build and deploy on the AI Cloud.</h1>
-<p>Some text...</p>  ❌ WRONG
-
-ALWAYS write complete code:
-<h1>Build and deploy on the AI Cloud.</h1>
-<p>Some text here with full content</p>  ✅ CORRECT
+NEVER write partial code - always include the ENTIRE file from start to finish.
 
 If you're running out of space, generate FEWER files but make them COMPLETE.
-It's better to have 3 complete files than 10 incomplete files.`
+It's better to have 3 complete files than 10 incomplete files.
+
+Remember: Use writeFile(path, content) for every file you create or modify.`
             }
           ],
           maxTokens: 8192, // Reduce to ensure completion
@@ -1175,35 +1126,22 @@ It's better to have 3 complete files than 10 incomplete files.`
               segmentContent += text;
               currentFile += text;
               
-              // Combine with buffer for tag detection
-              const searchText = tagBuffer + text;
-              
               // Log streaming chunks to console
               process.stdout.write(text);
               
-              // Check if we're entering or leaving a tag
-              const hasOpenTag = /<(file|package|packages|explanation|command|structure|template)\b/.test(text);
-              const hasCloseTag = /<\/(file|package|packages|explanation|command|structure|template)>/.test(text);
-              
-              if (hasOpenTag) {
-                // Send any buffered conversational text before the tag
-                if (conversationalBuffer.trim() && !isInTag) {
+              // Stream any conversational text (AI explaining what it's doing)
+              // Note: Most output will be tool calls now, not XML tags
+              if (text.trim() && !text.includes('```')) {
+                conversationalBuffer += text;
+                
+                // Send conversational updates in chunks
+                if (conversationalBuffer.length > 100) {
                   await sendProgress({ 
                     type: 'conversation', 
                     text: conversationalBuffer.trim()
                   });
                   conversationalBuffer = '';
                 }
-                isInTag = true;
-              }
-              
-              if (hasCloseTag) {
-                isInTag = false;
-              }
-              
-              // If we're not in a tag and text doesn't contain any XML tags, buffer as conversational text
-              if (!isInTag && !hasOpenTag && !hasCloseTag) {
-                conversationalBuffer += text;
               }
               
               // Stream the raw text for live preview
@@ -1216,66 +1154,6 @@ It's better to have 3 complete files than 10 incomplete files.`
               // Debug: Log every 100 characters streamed
               if (generatedCode.length % 100 < text.length) {
                 console.log(`[generate-ai-code-stream] Streamed ${generatedCode.length} chars`);
-              }
-              
-              // Check for package tags in buffered text (ONLY for edits, not initial generation)
-              let lastIndex = 0;
-              if (isEdit) {
-                const packageRegex = /<package>([^<]+)<\/package>/g;
-                let packageMatch;
-                
-                while ((packageMatch = packageRegex.exec(searchText)) !== null) {
-                  const packageName = packageMatch[1].trim();
-                  if (packageName && !packagesToInstall.includes(packageName)) {
-                    packagesToInstall.push(packageName);
-                    console.log(`[generate-ai-code-stream] Package detected: ${packageName}`);
-                    await sendProgress({ 
-                      type: 'package', 
-                      name: packageName,
-                      message: `Package detected: ${packageName}`
-                    });
-                  }
-                  lastIndex = packageMatch.index + packageMatch[0].length;
-                }
-              }
-              
-              // Keep unmatched portion in buffer for next iteration
-              tagBuffer = searchText.substring(Math.max(0, lastIndex - 50)); // Keep last 50 chars
-              
-              // Check for file boundaries
-              if (text.includes('<file path="')) {
-                const pathMatch = text.match(/<file path="([^"]+)"/);
-                if (pathMatch) {
-                  currentFilePath = pathMatch[1];
-                  isInFile = true;
-                  currentFile = text;
-                }
-              }
-              
-              // Check for file end
-              if (isInFile && currentFile.includes('</file>')) {
-                isInFile = false;
-                
-                // Send component progress update
-                if (currentFilePath.includes('components/')) {
-                  componentCount++;
-                  const componentName = currentFilePath.split('/').pop()?.replace('.tsx', '') || 'Component';
-                  await sendProgress({ 
-                    type: 'component', 
-                    name: componentName,
-                    path: currentFilePath,
-                    index: componentCount
-                  });
-                } else if (currentFilePath.includes('App.tsx')) {
-                  await sendProgress({ 
-                    type: 'app', 
-                    message: 'Generated main App.tsx',
-                    path: currentFilePath
-                  });
-                }
-                
-                currentFile = '';
-                currentFilePath = '';
               }
             } else if (chunk.type === 'tool-call') {
               // Tool call started - immediately notify frontend
@@ -1562,123 +1440,62 @@ It's better to have 3 complete files than 10 incomplete files.`
           return packages;
         }
         
-        // Parse files and send progress for each
-        const fileRegex = /<file path="([^"]+)">([\s\S]*?)<\/file>/g;
-        const files = [];
-        let match;
+        // Use files from tool calls (writeFile)
+        const files = toolCalledFiles;
+        console.log(`[generate-ai-code-stream] Using ${files.length} files from tool calls`);
         
-        while ((match = fileRegex.exec(generatedCode)) !== null) {
-          const filePath = match[1];
-          const content = match[2].trim();
-          files.push({ path: filePath, content });
-          
-          // Extract packages from file content - ONLY for edits
-          if (isEdit) {
-            const filePackages = extractPackagesFromCode(content);
-            for (const pkg of filePackages) {
-              if (!packagesToInstall.includes(pkg)) {
-                packagesToInstall.push(pkg);
-                console.log(`[generate-ai-code-stream] Package detected from imports: ${pkg}`);
-                await sendProgress({ 
-                  type: 'package', 
-                  name: pkg,
-                  message: `Package detected from imports: ${pkg}`
-                });
-              }
+        // Extract packages from tool-called files and send progress
+        for (const file of toolCalledFiles) {
+          const filePackages = extractPackagesFromCode(file.content);
+          for (const pkg of filePackages) {
+            if (!packagesToInstall.includes(pkg)) {
+              packagesToInstall.push(pkg);
+              console.log(`[generate-ai-code-stream] Package detected from imports: ${pkg}`);
+              await sendProgress({ 
+                type: 'package', 
+                name: pkg,
+                message: `Package detected: ${pkg}`
+              });
             }
           }
           
-          // Send progress for each file (reusing componentCount from streaming)
-          if (filePath.includes('components/')) {
-            const componentName = filePath.split('/').pop()?.replace('.tsx', '') || 'Component';
+          // Send progress for each file
+          if (file.path.includes('components/')) {
+            componentCount++;
+            const componentName = file.path.split('/').pop()?.replace('.tsx', '') || 'Component';
             await sendProgress({ 
               type: 'component', 
               name: componentName,
-              path: filePath,
+              path: file.path,
               index: componentCount
             });
-          } else if (filePath.includes('App.tsx')) {
+          } else if (file.path.includes('App.tsx')) {
             await sendProgress({ 
               type: 'app', 
               message: 'Generated main App.tsx',
-              path: filePath
+              path: file.path
             });
           }
         }
         
-        // If no files were parsed from XML format (tool calling mode), use toolCalledFiles
-        if (files.length === 0 && toolCalledFiles.length > 0) {
-          console.log(`[generate-ai-code-stream] No XML files found, using ${toolCalledFiles.length} files from tool calls`);
-          files.push(...toolCalledFiles);
-          
-          // Extract packages from tool-called files
-          for (const file of toolCalledFiles) {
-            const filePackages = extractPackagesFromCode(file.content);
-            for (const pkg of filePackages) {
-              if (!packagesToInstall.includes(pkg)) {
-                packagesToInstall.push(pkg);
-                console.log(`[generate-ai-code-stream] Package detected from tool-called file: ${pkg}`);
-                await sendProgress({ 
-                  type: 'package', 
-                  name: pkg,
-                  message: `Package detected: ${pkg}`
-                });
-              }
-            }
-            
-            // Send progress for each file
-            if (file.path.includes('components/')) {
-              componentCount++;
-              const componentName = file.path.split('/').pop()?.replace('.tsx', '') || 'Component';
-              await sendProgress({ 
-                type: 'component', 
-                name: componentName,
-                path: file.path,
-                index: componentCount
-              });
-            } else if (file.path.includes('App.tsx')) {
-              await sendProgress({ 
-                type: 'app', 
-                message: 'Generated main App.tsx',
-                path: file.path
-              });
-            }
-          }
-        }
+        // Default explanation
+        const explanation = 'Code generated successfully!';
         
-        // Extract explanation
-        const explanationMatch = generatedCode.match(/<explanation>([\s\S]*?)<\/explanation>/);
-        const explanation = explanationMatch ? explanationMatch[1].trim() : 'Code generated successfully!';
-        
-        // Validate generated code for truncation issues
+        // Validate generated files for truncation issues
         const truncationWarnings: string[] = [];
         
-        // Skip ellipsis checking entirely - too many false positives with spread operators, loading text, etc.
-        
-        // Check for unclosed file tags
-        const fileOpenCount = (generatedCode.match(/<file path="/g) || []).length;
-        const fileCloseCount = (generatedCode.match(/<\/file>/g) || []).length;
-        if (fileOpenCount !== fileCloseCount) {
-          truncationWarnings.push(`Unclosed file tags detected: ${fileOpenCount} open, ${fileCloseCount} closed`);
-        }
-        
-        // Check for files that seem truncated (very short or ending abruptly)
-        const truncationCheckRegex = /<file path="([^"]+)">([\s\S]*?)(?:<\/file>|$)/g;
-        let truncationMatch;
-        while ((truncationMatch = truncationCheckRegex.exec(generatedCode)) !== null) {
-          const filePath = truncationMatch[1];
-          const content = truncationMatch[2];
+        // Check each file from tool calls for truncation
+        for (const file of files) {
+          const { path: filePath, content } = file;
           
-          // Only check for really obvious HTML truncation - file ends with opening tag
+          // Only check for really obvious truncation issues
           if (content.trim().endsWith('<') || content.trim().endsWith('</')) {
             truncationWarnings.push(`File ${filePath} appears to have incomplete HTML tags`);
           }
           
-          // Skip "..." check - too many false positives with loading text, etc.
-          
-          // Only check for SEVERE truncation issues
+          // Only check for SEVERE truncation issues in JS/TS files
           if (filePath.match(/\.(jsx?|tsx?)$/)) {
-            // Only check for severely unmatched brackets (more than 3 difference)
+            // Check for severely unmatched brackets (more than 3 difference)
             const openBraces = (content.match(/{/g) || []).length;
             const closeBraces = (content.match(/}/g) || []).length;
             const braceDiff = Math.abs(openBraces - closeBraces);
@@ -1703,14 +1520,11 @@ It's better to have 3 complete files than 10 incomplete files.`
             warnings: truncationWarnings
           });
           
-          // Try to fix truncated files automatically
+          // Identify truncated files from tool calls
           const truncatedFiles: string[] = [];
-          const fileRegex = /<file path="([^"]+)">([\s\S]*?)(?:<\/file>|$)/g;
-          let match;
           
-          while ((match = fileRegex.exec(generatedCode)) !== null) {
-            const filePath = match[1];
-            const content = match[2];
+          for (const file of files) {
+            const { path: filePath, content } = file;
             
             // Check if this file appears truncated - be more selective
             const hasEllipsis = content.includes('...') && 
@@ -1807,12 +1621,6 @@ Provide the complete file content without any truncation. Include all necessary 
                   completedContent += chunk;
                 }
                 
-                // Replace the truncated file in the generatedCode
-                const filePattern = new RegExp(
-                  `<file path="${filePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}">[\\s\\S]*?(?:</file>|$)`,
-                  'g'
-                );
-                
                 // Extract just the code content (remove any markdown or explanation)
                 let cleanContent = completedContent;
                 if (cleanContent.includes('```')) {
@@ -1822,12 +1630,12 @@ Provide the complete file content without any truncation. Include all necessary 
                   }
                 }
                 
-                generatedCode = generatedCode.replace(
-                  filePattern,
-                  `<file path="${filePath}">\n${cleanContent}\n</file>`
-                );
-                
-                console.log(`[generate-ai-code-stream] Successfully completed ${filePath}`);
+                // Update the file in the files array
+                const fileIndex = files.findIndex(f => f.path === filePath);
+                if (fileIndex !== -1) {
+                  files[fileIndex].content = cleanContent;
+                  console.log(`[generate-ai-code-stream] Successfully completed ${filePath}`);
+                }
                 
               } catch (completionError) {
                 console.error(`[generate-ai-code-stream] Failed to complete ${filePath}:`, completionError);
