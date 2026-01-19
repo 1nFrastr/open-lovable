@@ -75,3 +75,10 @@ export interface IntentPattern {
   type: EditType;
   fileResolver: (prompt: string, manifest: FileManifest) => string[];
 }
+
+// Edit context with intent and target files
+export interface EditContext {
+  editIntent: EditIntent;
+  primaryFiles: string[];
+  contextFiles?: string[];
+}
