@@ -29,7 +29,7 @@ interface ScrapeData {
 }
 
 interface UseStartGenerationProps {
-  createSandbox: (autoStart?: boolean) => Promise<void>;
+  createSandbox: (fromHomeScreen?: boolean, templateName?: string, skipAutoFetchFiles?: boolean) => Promise<SandboxData | null>;
   captureUrlScreenshot: (url: string) => void;
   applyGeneratedCode: (code: string, isEdit: boolean, overrideSandboxData?: SandboxData) => Promise<void>;
 }

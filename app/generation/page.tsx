@@ -365,7 +365,7 @@ function AISandboxPage() {
               onTabChange={uiState.setActiveTab}
               sandboxData={sandboxState.sandboxData}
               isGenerating={generationState.generationProgress.isGenerating}
-              isEdit={generationState.generationProgress.isEdit}
+              isEdit={generationState.generationProgress.isEdit ?? false}
               filesCount={generationState.generationProgress.files.length}
             />
             <div className="flex-1 relative overflow-hidden">

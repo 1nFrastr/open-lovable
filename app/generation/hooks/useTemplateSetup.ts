@@ -2,6 +2,7 @@ import { useCallback, RefObject } from 'react';
 import { useSandboxState } from './useSandboxState';
 import { useChatState } from './useChatState';
 import { useUIState } from './useUIState';
+import { useGenerationState } from './useGenerationState';
 import { useSandbox } from './useSandbox';
 import type { PreviewPaneRef } from '../components/PreviewPane';
 
@@ -15,7 +16,7 @@ interface SandboxData {
 }
 
 interface UseTemplateSetupProps {
-  previewPaneRef: RefObject<PreviewPaneRef>;
+  previewPaneRef: RefObject<PreviewPaneRef | null>;
   fetchSandboxFiles: () => Promise<void>;
 }
 
@@ -26,7 +27,8 @@ interface UseTemplateSetupProps {
 export function useTemplateSetup({ previewPaneRef, fetchSandboxFiles }: UseTemplateSetupProps) {
   const { sandboxData } = useSandboxState();
   const { setConversationContext, setAiChatInput } = useChatState();
-  const { setActiveTab, setPendingAutoSendMessage } = useUIState();
+  const { setActiveTab } = useUIState();
+  const { setPendingAutoSendMessage } = useGenerationState();
   const { addChatMessage } = useSandbox();
 
   const handleTemplateSetup = useCallback(async (
