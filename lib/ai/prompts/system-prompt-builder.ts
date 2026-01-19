@@ -29,22 +29,28 @@ You have access to these tools to interact with the sandbox:
    - Replaces the old <package>/<packages> XML tags
    - Example: installPackages(["react-router-dom", "axios"])
 
-TOOL USAGE WORKFLOW:
-- For multiple files: Call writeFile multiple times, one per file
-- For packages + code: Call installPackages first, then writeFile
-- Files are provided in context for your reference
+🚨 CRITICAL TOOL USAGE WORKFLOW - YOU MUST COMPLETE ALL STEPS:
+1. If packages are needed: Call installPackages FIRST
+2. Then ALWAYS call writeFile for EVERY file you need to create/update
+3. NEVER stop after just installing packages - you MUST create the code files!
+
+For multiple files: Call writeFile multiple times, one per file
+For packages + code: Call installPackages first, THEN writeFile for each file
 
 EXAMPLE WORKFLOW:
-User: "Add React Router navigation"
-Your approach:
-1. installPackages(["react-router-dom", "@types/react-router-dom"])
-2. writeFile("src/App.tsx", <updated App with Router>)
-3. writeFile("src/components/Navbar.tsx", <new Navbar component>)
+User: "Create a blog app using shadcn/ui and lucide-react icons"
+Your complete approach (ALL steps required):
+1. installPackages(["lucide-react", "clsx", "tailwind-merge"])
+2. writeFile("src/App.tsx", <complete App component with blog UI>)
+3. writeFile("src/components/BlogPost.tsx", <BlogPost component>)
+4. writeFile("src/components/BlogList.tsx", <BlogList component>)
 
-⚠️ IMPORTANT:
+🚨 CRITICAL REMINDER:
+- Installing packages is NOT the final step - you must create code files!
+- ALWAYS follow installPackages with writeFile calls
+- The user expects a working application, not just installed packages
 - DO NOT use XML tags like <file>, <package> anymore
-- Use the tools instead - they are more reliable
-- You can see all existing files in the context provided`;
+- Use the tools instead - they are more reliable`;
 
 // Code brevity rules
 const CODE_BREVITY_PROMPT = `---
@@ -316,9 +322,12 @@ This is the user's FIRST experience. Make it impressive:
 
 Create a polished, professional application that works perfectly on first load.
 
-⚠️ OUTPUT FORMAT:
-Use writeFile() tool calls for EVERY file
-NEVER output "Generated Files:" as plain text`;
+🚨 CRITICAL OUTPUT REQUIREMENTS:
+1. Use writeFile() tool calls for EVERY file you create
+2. If you need packages, call installPackages() FIRST, then call writeFile() for each file
+3. NEVER stop after just calling installPackages - you MUST call writeFile!
+4. NEVER output "Generated Files:" as plain text
+5. The task is NOT complete until you've called writeFile for all necessary files`;
 
 /**
  * Build comprehensive system prompt for AI code generation
@@ -386,6 +395,12 @@ export function buildUserPrompt(userPrompt: string): string {
 
 ${CODE_GENERATION_RULES}
 
+🚨 CRITICAL TOOL CALLING REQUIREMENTS:
+1. You MUST call writeFile() for EVERY file you create or modify
+2. If you call installPackages(), you MUST then call writeFile() - don't stop!
+3. Installing packages alone does NOT complete the task
+4. The user expects actual code files, not just package installations
+
 CRITICAL: You MUST provide COMPLETE file content when calling writeFile().
 
 NEVER write partial code - always include the ENTIRE file from start to finish.
@@ -393,5 +408,8 @@ NEVER write partial code - always include the ENTIRE file from start to finish.
 If you're running out of space, generate FEWER files but make them COMPLETE.
 It's better to have 3 complete files than 10 incomplete files.
 
-Remember: Use writeFile(path, content) for every file you create or modify.`;
+🔄 WORKFLOW REMINDER:
+Step 1: If packages needed → installPackages(["pkg1", "pkg2"])
+Step 2: Create files → writeFile("path1", content1), writeFile("path2", content2), etc.
+Both steps are REQUIRED to complete the task!`;
 }

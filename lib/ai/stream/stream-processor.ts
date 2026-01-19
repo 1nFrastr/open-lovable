@@ -390,6 +390,9 @@ export function createToolCallbackHandler(
   toolCalledFiles: Array<{ path: string; content: string }>,
   packagesToInstall: string[]
 ) {
+  let hasCalledInstallPackages = false;
+  let hasCalledWriteFile = false;
+  
   return async (step: any) => {
     console.log('[createToolCallbackHandler] onStepFinish called:', {
       stepType: step.stepType,
@@ -411,6 +414,7 @@ export function createToolCallbackHandler(
         
         // Track files created via writeFile tool
         if (toolCall.toolName === 'writeFile' && toolCall.input) {
+          hasCalledWriteFile = true;
           toolCalledFiles.push({
             path: toolCall.input.path,
             content: toolCall.input.content
@@ -425,6 +429,7 @@ export function createToolCallbackHandler(
             size: toolCall.input.content?.length || 0
           });
         } else if (toolCall.toolName === 'installPackages' && toolCall.input) {
+          hasCalledInstallPackages = true;
           // Send package install progress to frontend
           const packages = toolCall.input.packages || [];
           for (const pkg of packages) {
@@ -458,6 +463,20 @@ export function createToolCallbackHandler(
           ? (typeof r.result === 'string' ? r.result.slice(0, 100) : JSON.stringify(r.result).slice(0, 100))
           : 'no result'
       })));
+    }
+    
+    // Check if AI only called installPackages without writeFile (incomplete task)
+    if (step.finishReason === 'stop' && hasCalledInstallPackages && !hasCalledWriteFile) {
+      console.warn('[createToolCallbackHandler] ⚠️  AI called installPackages but no writeFile calls detected!');
+      console.warn('[createToolCallbackHandler] This is likely a prompt following issue - packages installed but no code generated');
+      
+      await sendProgress({
+        type: 'warning',
+        message: '⚠️ AI installed packages but did not generate code files. This may be a model issue. Try rephrasing your request or using a different model.',
+        hasCalledInstallPackages,
+        hasCalledWriteFile,
+        suggestion: 'Try: "Create a complete blog app with all necessary files using shadcn/ui and lucide-react"'
+      });
     }
   };
 }
