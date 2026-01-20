@@ -1,6 +1,7 @@
 import { tool } from 'ai';
 import { z } from 'zod';
 import { replace, generateDiff, calculateDiffStats, normalizeLineEndings } from './edit-file';
+import { createReadTool, createGrepTool, createGlobTool } from './context-tools';
 
 /**
  * Sandbox Tools Module
@@ -209,5 +210,10 @@ export function createSandboxTools(): Record<string, any> {
         }
       },
     }),
+
+    // Context exploration tools
+    readFile: createReadTool(),
+    grep: createGrepTool(),
+    glob: createGlobTool(),
   };
 }

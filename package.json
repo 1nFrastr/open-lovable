@@ -10,6 +10,8 @@
     "lint": "next lint",
     "test:api": "node tests/api-endpoints.test.js",
     "test:code": "node tests/code-execution.test.js",
+    "test:tools": "tsx lib/ai/tools/__tests__/context-tools.test.ts",
+    "test:edit": "tsx lib/ai/tools/__tests__/edit-file.test.ts",
     "test:all": "npm run test:integration && npm run test:api && npm run test:code",
     "e2b:build": "cd e2b-template/open-lovable-react-vite && npm run e2b:build:prod",
     "e2b:list": "e2b template list",
@@ -82,6 +84,7 @@
     "jotai": "^2.14.0",
     "lodash-es": "^4.17.21",
     "lucide-react": "^0.532.0",
+    "minimatch": "^10.1.1",
     "motion": "^12.23.12",
     "nanoid": "^5.1.5",
     "nanostores": "^1.1.0",
@@ -114,6 +117,7 @@
     "postcss-import": "^16.1.1",
     "postcss-nesting": "^13.0.2",
     "tailwindcss": "^3.4.17",
+    "tsx": "^4.21.0",
     "typescript": "^5"
   }
 }

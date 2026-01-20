@@ -203,3 +203,81 @@ export function addUserMessage(
   // Auto-cleanup after adding message
   cleanupConversationState(state);
 }
+
+/**
+ * Get message history for LLM in a format it can consume
+ * 
+ * @param state - Conversation state
+ * @returns Array of messages in LLM format
+ */
+export function getMessageHistoryForLLM(
+  state: ConversationState
+): Array<{ role: string; content: string }> {
+  if (!state || !state.context.messages) {
+    return [];
+  }
+
+  // Only return last 5 messages (lightweight, avoid too many tokens)
+  const recentMessages = state.context.messages.slice(-5);
+
+  return recentMessages.map((msg) => ({
+    role: msg.role,
+    content: msg.content,
+  }));
+}
+
+/**
+ * Get all modified files from message history
+ * 
+ * @param state - Conversation state
+ * @returns Array of file paths
+ */
+export function getAllModifiedFiles(state: ConversationState): string[] {
+  if (!state || !state.context.messages) {
+    return [];
+  }
+
+  const files = new Set<string>();
+
+  state.context.messages.forEach((msg) => {
+    if (msg.metadata?.editedFiles) {
+      msg.metadata.editedFiles.forEach((f) => files.add(f));
+    }
+  });
+
+  return Array.from(files);
+}
+
+/**
+ * Record assistant's response message
+ * 
+ * @param state - Conversation state
+ * @param content - Message content
+ * @param editedFiles - List of files that were edited
+ */
+export function addAssistantMessage(
+  state: ConversationState,
+  content: string,
+  editedFiles: string[]
+): void {
+  const message: ConversationMessage = {
+    id: `msg-${Date.now()}-assistant`,
+    role: 'assistant',
+    content: content.substring(0, 500), // Limit length to avoid storing too much
+    timestamp: Date.now(),
+    metadata: {
+      editedFiles,
+    },
+  };
+
+  state.context.messages.push(message);
+  state.lastUpdated = Date.now();
+
+  // Auto-cleanup (keep last 5 messages)
+  cleanupConversationState(state, 5);
+  
+  console.log('[addAssistantMessage] Recorded:', {
+    filesCount: editedFiles.length,
+    totalMessages: state.context.messages.length
+  });
+}

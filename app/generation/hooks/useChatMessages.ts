@@ -473,10 +473,18 @@ export function useChatMessages(options: UseChatMessagesOptions) {
           thinkingDuration: undefined
         }));
 
-        setTimeout(() => {
-          // Switch to preview but keep files for display
-          setActiveTab('preview');
-        }, 1000);
+        // Only switch to preview if files were actually modified
+        // Context tools (readFile, grep, glob) should keep current view
+        const hasFileChanges = generationProgress?.files && generationProgress.files.length > 0;
+        
+        if (hasFileChanges) {
+          setTimeout(() => {
+            // Switch to preview when files were modified
+            setActiveTab('preview');
+          }, 1000);
+        } else {
+          console.log('[useChatMessages] No file changes detected, staying on current tab');
+        }
       }
 
     } catch (error: any) {

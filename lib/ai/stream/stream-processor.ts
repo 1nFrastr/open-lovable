@@ -428,6 +428,9 @@ export function createToolCallbackHandler(
             path: toolCall.input.path,
             size: toolCall.input.content?.length || 0
           });
+        } else if (toolCall.toolName === 'editFile' && toolCall.input) {
+          hasCalledWriteFile = true;
+          console.log(`[createToolCallbackHandler] File edited via tool call: ${toolCall.input.path}`);
         } else if (toolCall.toolName === 'installPackages' && toolCall.input) {
           hasCalledInstallPackages = true;
           // Send package install progress to frontend
@@ -458,11 +461,47 @@ export function createToolCallbackHandler(
       console.log('[createToolCallbackHandler] Tool results:', step.toolResults.map((r: any) => ({
         toolName: r.toolName,
         toolCallId: r.toolCallId,
-        hasResult: !!r.result,
-        resultPreview: r.result 
-          ? (typeof r.result === 'string' ? r.result.slice(0, 100) : JSON.stringify(r.result).slice(0, 100))
-          : 'no result'
+        hasOutput: !!r.output,
+        outputPreview: r.output 
+          ? (typeof r.output === 'string' ? r.output.slice(0, 100) : JSON.stringify(r.output).slice(0, 100))
+          : 'no output'
       })));
+      
+      // Handle context tool results (readFile, grep, glob)
+      for (const toolResult of step.toolResults) {
+        const isContextTool = ['readFile', 'grep', 'glob'].includes(toolResult.toolName);
+        
+        // AI SDK v6 uses 'output' field in onStepFinish (not 'result')
+        const actualOutput = toolResult.output;
+        
+        if (isContextTool && actualOutput) {
+          // Extract the content from tool output
+          let content = '';
+          if (typeof actualOutput === 'string') {
+            content = actualOutput;
+          } else if (actualOutput && typeof actualOutput === 'object') {
+            // Our tools return { success, content, metadata }
+            content = actualOutput.content || JSON.stringify(actualOutput, null, 2);
+          }
+          
+          console.log(`[createToolCallbackHandler] Context tool result (${toolResult.toolName}):`, {
+            hasContent: !!content,
+            contentLength: content.length,
+            contentPreview: content.slice(0, 200)
+          });
+          
+          // Send context tool result as a conversational message
+          await sendProgress({
+            type: 'conversation',
+            text: content,  // Use 'text' to match frontend expectations
+            toolName: toolResult.toolName,
+            metadata: {
+              isContextTool: true,
+              toolCallId: toolResult.toolCallId
+            }
+          });
+        }
+      }
     }
     
     // Check if AI only called installPackages without writeFile (incomplete task)

@@ -11,7 +11,9 @@ import { extractPackagesFromFiles } from '@/lib/ai/tools/package-detector';
 import { 
   initConversationState, 
   buildConversationContext, 
-  addUserMessage 
+  addUserMessage,
+  getMessageHistoryForLLM,
+  addAssistantMessage
 } from '@/lib/ai/context/conversation-context-builder';
 import { buildSystemPrompt, buildUserPrompt } from '@/lib/ai/prompts/system-prompt-builder';
 import { buildFullContext } from '@/lib/ai/context/full-context-builder';
@@ -182,11 +184,22 @@ export async function POST(request: NextRequest) {
           model: modelProvider(actualModel),
           messages: [
             { role: 'system', content: systemPrompt },
+            // Include message history for context
+            ...(global.conversationState 
+              ? getMessageHistoryForLLM(global.conversationState) 
+              : []
+            ),
             { role: 'user', content: buildUserPrompt(fullPrompt) }
           ],
           maxTokens: 8192,
           stopSequences: []
         };
+        
+        // Log history count for debugging
+        const historyCount = global.conversationState 
+          ? global.conversationState.context.messages.length 
+          : 0;
+        console.log('[generate-ai-code-stream] Including', historyCount, 'messages in context');
         
         // Enable tool calling for supported models
         if (supportsTools) {
@@ -289,6 +302,23 @@ export async function POST(request: NextRequest) {
           // Apply recovered content
           const updatedFiles = applyRecoveredContent(toolCalledFiles, recoveredContent);
           toolCalledFiles.splice(0, toolCalledFiles.length, ...updatedFiles);
+        }
+        
+        // Record assistant message before completion
+        if (global.conversationState && toolCalledFiles.length > 0) {
+          try {
+            const editedFiles = toolCalledFiles.map((f) => f.path);
+            addAssistantMessage(
+              global.conversationState,
+              generatedCode || 'Generated code successfully',
+              editedFiles
+            );
+            
+            console.log('[generate-ai-code-stream] Recorded assistant message with', editedFiles.length, 'files');
+          } catch (error) {
+            // Failure doesn't affect main flow
+            console.error('[generate-ai-code-stream] Failed to record assistant message:', error);
+          }
         }
         
         // 4.10 Send completion
